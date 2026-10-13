@@ -1,0 +1,83 @@
+blueprint:
+  name: Heizung – Aus / außerhalb der Heizperiode
+  description: >
+    Schaltet die gewählten Raumthermostate aus, wenn die Heizperiode vorbei ist
+    oder der zentrale Heizmodus auf „Aus“ steht, und beim Wechsel zurück wieder
+    auf Heizen. Die Wochenpläne der Heizplan Card setzen danach den passenden
+    Modus (Komfort/Eco) selbst.
+  domain: automation
+  input:
+    thermostats:
+      name: Raumthermostate
+      selector:
+        entity:
+          domain: climate
+          multiple: true
+    season_entity:
+      name: Heizperiode
+      description: Schalter, der während der Heizperiode an ist
+      selector:
+        entity:
+          domain:
+            - input_boolean
+            - binary_sensor
+            - switch
+    mode_entity:
+      name: Heizmodus (optional)
+      description: Zentrale Auswahl, z. B. Aus / Heizen / Urlaub
+      default: ""
+      selector:
+        entity:
+          domain:
+            - input_select
+            - select
+    mode_off:
+      name: Option „Aus“
+      description: Optionstext für „nicht heizen“, genau wie in der Auswahl
+      default: Aus
+      selector:
+        text: {}
+
+mode: restart
+
+variables:
+  season_entity: !input season_entity
+  mode_entity: !input mode_entity
+  mode_off: !input mode_off
+
+trigger:
+  - platform: state
+    entity_id: !input season_entity
+  - platform: event
+    event_type: state_changed
+    event_data:
+      entity_id: !input mode_entity
+  - platform: homeassistant
+    event: start
+
+condition:
+  - condition: template
+    value_template: >
+      {{ trigger.platform != 'event'
+         or (trigger.event.data.old_state is not none
+             and trigger.event.data.new_state is not none
+             and trigger.event.data.old_state.state != trigger.event.data.new_state.state) }}
+
+action:
+  - if:
+      - condition: template
+        value_template: >
+          {{ not is_state(season_entity, 'on')
+             or (mode_entity != '' and is_state(mode_entity, mode_off)) }}
+    then:
+      - service: climate.set_hvac_mode
+        target:
+          entity_id: !input thermostats
+        data:
+          hvac_mode: "off"
+    else:
+      - service: climate.set_hvac_mode
+        target:
+          entity_id: !input thermostats
+        data:
+          hvac_mode: heat

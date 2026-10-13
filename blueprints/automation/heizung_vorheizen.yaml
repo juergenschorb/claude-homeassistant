@@ -1,0 +1,244 @@
+blueprint:
+  name: Heizung – Vorheizen mit Lernfunktion
+  description: >
+    Schaltet einen Raum rechtzeitig vor dem nächsten Komfort-Zeitraum auf Komfort,
+    damit die Komforttemperatur zum geplanten Zeitpunkt erreicht ist (wie der
+    Raumregler mit Optimum Start). Die Aufheizrate (K/h) lernt die Automation selbst: Bei
+    jedem Wechsel auf Komfort misst sie, wie schnell der Raum warm wird, und
+    passt den Wert im Helfer behutsam an. Mit Außentemperatur-Sensor wird die
+    Rate auf 0 °C außen umgerechnet gelernt und je nach aktueller
+    Außentemperatur angepasst (bei Frost länger vorheizen).
+    Voraussetzung: Wochenpläne mit der Heizplan Card (Scheduler-Komponente).
+  domain: automation
+  input:
+    climate_entity:
+      name: Raumthermostat
+      selector:
+        entity:
+          domain: climate
+    temperature_sensor:
+      name: Raumtemperatur (optional)
+      description: Leer lassen, dann wird die Ist-Temperatur des Thermostats verwendet.
+      default: ""
+      selector:
+        entity:
+          domain: sensor
+          device_class: temperature
+    schedule_tag:
+      name: Plan-Tag
+      description: >
+        Tag des Wochenplans aus der Heizplan-Karte, z. B. heizplan_eg_wohnzimmer
+        (steht in der Scheduler Card bei den Plänen dieses Raums).
+      selector:
+        text: {}
+    rate_helper:
+      name: Helfer Aufheizrate
+      description: >
+        input_number in K/h (z. B. min 0.2, max 5, Start 1.0). Wird automatisch angepasst.
+        Mit Außentemperatur-Sensor gilt der Wert für 0 °C außen.
+      selector:
+        entity:
+          domain: input_number
+    outdoor_sensor:
+      name: Außentemperatur (optional)
+      description: z. B. sensor.hargassner_aussentemperatur_gemittelt
+      default: ""
+      selector:
+        entity:
+          domain: sensor
+          device_class: temperature
+    outdoor_factor:
+      name: Einfluss Außentemperatur
+      description: >
+        Um wie viel Prozent sich die Aufheizrate pro Grad Außentemperatur ändert.
+        2 %/K heißt: bei −10 °C heizt der Raum 20 % langsamer als bei 0 °C, bei +10 °C 20 % schneller.
+      default: 2
+      selector:
+        number:
+          min: 0
+          max: 5
+          step: 0.5
+          unit_of_measurement: "%/K"
+    comfort_preset:
+      name: Preset Komfort
+      default: comfort
+      selector:
+        text: {}
+    comfort_temperature:
+      name: Komforttemperatur
+      default: 21
+      selector:
+        number:
+          min: 15
+          max: 26
+          step: 0.5
+          unit_of_measurement: "°C"
+    max_preheat:
+      name: Maximale Vorheizzeit
+      default: 180
+      selector:
+        number:
+          min: 15
+          max: 360
+          step: 15
+          unit_of_measurement: min
+    window_entity:
+      name: Fensterkontakt (optional)
+      description: Bei offenem Fenster wird nicht vorgeheizt und nicht gelernt.
+      default: ""
+      selector:
+        entity:
+          domain: binary_sensor
+    extra_conditions:
+      name: Nur vorheizen wenn … (optional)
+      description: z. B. Heizperiode an und Heizmodus = Heizen
+      default: []
+      selector:
+        condition: {}
+
+mode: parallel
+max: 5
+
+variables:
+  climate_entity: !input climate_entity
+  temperature_sensor: !input temperature_sensor
+  schedule_tag: !input schedule_tag
+  rate_helper: !input rate_helper
+  comfort_preset: !input comfort_preset
+  comfort_temperature: !input comfort_temperature
+  max_preheat: !input max_preheat
+  window_entity: !input window_entity
+  outdoor_sensor: !input outdoor_sensor
+  outdoor_factor: !input outdoor_factor
+
+trigger:
+  - platform: time_pattern
+    minutes: "/5"
+    id: pruefen
+  - platform: state
+    entity_id: !input climate_entity
+    attribute: preset_mode
+    to: !input comfort_preset
+    id: lernen
+
+action:
+  - variables:
+      ist: >
+        {% if temperature_sensor %}
+          {{ states(temperature_sensor) | float(none) }}
+        {% else %}
+          {{ state_attr(climate_entity, 'current_temperature') | float(none) }}
+        {% endif %}
+      fenster_offen: "{{ window_entity != '' and is_state(window_entity, 'on') }}"
+      # Faktor Außentemperatur: 1 bei 0 °C, begrenzt auf 0.3 … 2
+      aussen_faktor: >
+        {% set ta = states(outdoor_sensor) | float(none) if outdoor_sensor else none %}
+        {% if ta is number %}
+          {{ [[1 + outdoor_factor / 100 * ta, 0.3] | max, 2] | min }}
+        {% else %}
+          1
+        {% endif %}
+  - choose:
+      # ---------- Vorheizen ----------
+      - conditions:
+          - condition: trigger
+            id: pruefen
+          - condition: template
+            value_template: >
+              {{ ist is number and not fenster_offen
+                 and state_attr(climate_entity, 'preset_mode') != comfort_preset
+                 and not is_state(climate_entity, 'off') }}
+          - condition: and
+            conditions: !input extra_conditions
+        sequence:
+          - variables:
+              naechster_komfort: >
+                {% set ns = namespace(t=none) %}
+                {% for s in states.switch
+                     if s.state != 'off'
+                     and schedule_tag in (s.attributes.tags | default([], true))
+                     and s.attributes.next_slot is not none
+                     and s.attributes.next_trigger %}
+                  {% set a = (s.attributes.actions | default([], true))[s.attributes.next_slot] | default({}) %}
+                  {% if (a.service_data | default({})).preset_mode | default('') == comfort_preset %}
+                    {% set t = as_timestamp(s.attributes.next_trigger) %}
+                    {% if ns.t is none or t < ns.t %}{% set ns.t = t %}{% endif %}
+                  {% endif %}
+                {% endfor %}
+                {{ ns.t if ns.t is not none else 0 }}
+              rate: "{{ [states(rate_helper) | float(1) * aussen_faktor, 0.1] | max | round(2) }}"
+              vorheiz_min: >
+                {% set delta = comfort_temperature - ist %}
+                {{ [[(delta / rate * 60) | round(0), 0] | max, max_preheat] | min }}
+          - condition: template
+            value_template: >
+              {% set jetzt = as_timestamp(now()) %}
+              {{ naechster_komfort > jetzt and vorheiz_min > 0
+                 and jetzt >= naechster_komfort - vorheiz_min * 60 }}
+          - service: climate.set_preset_mode
+            target:
+              entity_id: "{{ climate_entity }}"
+            data:
+              preset_mode: "{{ comfort_preset }}"
+          - service: logbook.log
+            data:
+              name: Vorheizen
+              message: >
+                startet {{ vorheiz_min | int }} min vor
+                {{ naechster_komfort | timestamp_custom('%H:%M') }}
+                ({{ ist }} → {{ comfort_temperature }} °C, Rate {{ rate }} K/h)
+              entity_id: "{{ climate_entity }}"
+
+      # ---------- Lernen ----------
+      - conditions:
+          - condition: trigger
+            id: lernen
+          - condition: template
+            value_template: "{{ ist is number and not fenster_offen and (comfort_temperature - ist) >= 0.5 }}"
+        sequence:
+          - variables:
+              start_zeit: "{{ as_timestamp(now()) }}"
+              start_temp: "{{ ist }}"
+          - wait_template: >
+              {% set t = states(temperature_sensor) | float(0) if temperature_sensor
+                 else state_attr(climate_entity, 'current_temperature') | float(0) %}
+              {{ t >= comfort_temperature - 0.1
+                 or state_attr(climate_entity, 'preset_mode') != comfort_preset
+                 or (window_entity != '' and is_state(window_entity, 'on')) }}
+            timeout:
+              minutes: "{{ (max_preheat * 2) | int }}"
+            continue_on_timeout: false
+          - variables:
+              end_temp: >
+                {% if temperature_sensor %}
+                  {{ states(temperature_sensor) | float(0) }}
+                {% else %}
+                  {{ state_attr(climate_entity, 'current_temperature') | float(0) }}
+                {% endif %}
+              stunden: "{{ (as_timestamp(now()) - start_zeit) / 3600 }}"
+          # nur werten, wenn Ziel wirklich erreicht wurde (nicht abgebrochen / Fenster)
+          - condition: template
+            value_template: >
+              {{ end_temp >= comfort_temperature - 0.1 and stunden > 0.1
+                 and state_attr(climate_entity, 'preset_mode') == comfort_preset
+                 and not (window_entity != '' and is_state(window_entity, 'on')) }}
+          - variables:
+              # auf 0 °C außen umgerechnet (Außentemperatur beim Start der Messung)
+              gemessen: "{{ ((end_temp - start_temp) / stunden / aussen_faktor) | round(2) }}"
+              alt: "{{ states(rate_helper) | float(1) }}"
+              neu: >
+                {% set lo = state_attr(rate_helper, 'min') | float(0.2) %}
+                {% set hi = state_attr(rate_helper, 'max') | float(5) %}
+                {{ [[(0.7 * alt + 0.3 * gemessen) | round(2), lo] | max, hi] | min }}
+          - service: input_number.set_value
+            target:
+              entity_id: "{{ rate_helper }}"
+            data:
+              value: "{{ neu }}"
+          - service: logbook.log
+            data:
+              name: Aufheizrate gelernt
+              message: >
+                gemessen {{ gemessen }} K/h (umgerechnet auf 0 °C außen, Faktor {{ aussen_faktor }}),
+                neu {{ neu }} K/h (vorher {{ alt }})
+              entity_id: "{{ climate_entity }}"
