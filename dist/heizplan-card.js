@@ -4,11 +4,11 @@
  * Speichert die Pläne in der Scheduler-Komponente (HACS, nielsfaber/scheduler-component):
  * je Gruppe gleicher Tage ein Zeitplan, der zu jedem Wechselpunkt
  * climate.set_preset_mode am Raumthermostat aufruft.
- * Dazu: Preset-Temperaturen je Raum (number-Entitäten von Versatile Thermostat)
+ * Dazu: Preset-Temperaturen je Raum (number-Entitäten von Versatile oder Better Thermostat)
  * und zeitlich begrenzte manuelle Temperatur (pausiert den Plan bis zum Ende).
  */
 
-const CARD_VERSION = "0.4.0";
+const CARD_VERSION = "0.4.1";
 
 const OVERRIDE_HOURS = [1, 2, 3, 4, 5, 6, 8, 12, 24];
 
@@ -140,7 +140,7 @@ class HeizplanCard extends HTMLElement {
           mode_entity: "Zentrale Auswahl, z. B. Aus / Heizen / Urlaub",
           mode_heat: "Optionstext für den Normal-Plan, genau wie in der Auswahl",
           mode_vacation: "Optionstext für den Urlaubsplan (leer = kein Urlaubsplan)",
-          comfort_temperature_entity: "Leer = automatisch (Versatile Thermostat, *_preset_comfort_temp)",
+          comfort_temperature_entity: "Leer = automatisch (Versatile oder Better Thermostat)",
         })[s.name],
       computeLabel: (s) =>
         ({
@@ -192,6 +192,14 @@ class HeizplanCard extends HTMLElement {
     this._render();
   }
 
+  // Better Thermostat kennt kein "frost": Frostschutz dann auf "away" (Abwesend) legen
+  _adaptModes() {
+    if (this._config.modes) return;
+    const pm = this._hass?.states?.[this._config.entity]?.attributes?.preset_modes || [];
+    const frost = this._modes.find((m) => m.key === "frost");
+    if (frost && pm.length && !pm.includes("frost") && pm.includes("away")) frost.preset = "away";
+  }
+
   // Pläne aus Heizperiode / Heizmodus ableiten (GUI-Konfiguration)
   _plansFromConfig(c) {
     const base = c.season_entity ? [{ entity: c.season_entity, state: "on" }] : [];
@@ -211,7 +219,10 @@ class HeizplanCard extends HTMLElement {
   set hass(hass) {
     const first = !this._hass;
     this._hass = hass;
-    if (first) this._load();
+    if (first) {
+      this._adaptModes();
+      this._load();
+    }
     if (!this._edit) this._render();
   }
 
@@ -416,10 +427,15 @@ class HeizplanCard extends HTMLElement {
     if (c[`${m.key}_temperature_entity`]) return c[`${m.key}_temperature_entity`];
     const hass = this._hass;
     const suffix = `_preset_${m.preset}_temp`;
+    // Versatile Thermostat: translation_key "comfort_temp", Better Thermostat: "preset_comfort"
+    const keys = [`${m.preset}_temp`, `preset_${m.preset}`];
     const dev = hass?.entities?.[c.entity]?.device_id;
     if (dev) {
       const hit = Object.values(hass.entities).find(
-        (e) => e.device_id === dev && e.entity_id.startsWith("number.") && e.entity_id.endsWith(suffix)
+        (e) =>
+          e.device_id === dev &&
+          e.entity_id.startsWith("number.") &&
+          (keys.includes(e.translation_key) || e.entity_id.endsWith(suffix))
       );
       if (hit) return hit.entity_id;
     }
@@ -783,7 +799,7 @@ class HeizplanCard extends HTMLElement {
       ${rows}
       ${
         missing
-          ? `<div class="phint">Keine eigene Temperatur-Entität gefunden. In Versatile Thermostat für diesen Raum „Zentrale Konfiguration für Presets“ ausschalten oder die Entität im Karten-Editor wählen.</div>`
+          ? `<div class="phint">Keine eigene Temperatur-Entität gefunden. Versatile Thermostat: „Zentrale Konfiguration für Presets“ für diesen Raum ausschalten. Better Thermostat: Preset in der Konfiguration aktivieren. Oder die Entität im Karten-Editor wählen.</div>`
           : `<div class="phint">Gilt nur für diesen Raum und wird sofort übernommen.</div>`
       }
     </div>`;

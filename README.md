@@ -29,7 +29,7 @@ Dazu zwei Blueprints:
 ## Voraussetzungen
 
 - [Scheduler-Komponente](https://github.com/nielsfaber/scheduler-component) (HACS, Integration)
-- Ein Raumthermostat (`climate.…`) mit Presets, z. B. [Versatile Thermostat](https://github.com/jmcollin78/versatile_thermostat) (`comfort`, `eco`, `frost`)
+- Ein Raumthermostat (`climate.…`) mit Presets, z. B. [Versatile Thermostat](https://github.com/jmcollin78/versatile_thermostat) (`comfort`, `eco`, `frost`) oder [Better Thermostat](https://github.com/KartoffelToby/better_thermostat) ab 1.9 (`comfort`, `eco`, `away`)
 
 ## Installation
 
@@ -43,7 +43,7 @@ Dazu zwei Blueprints:
 ### Manuell
 
 1. `dist/heizplan-card.js` nach `/config/www/heizplan-card.js` kopieren
-2. *Einstellungen → Dashboards → ⋮ → Ressourcen → Ressource hinzufügen*: URL `/local/heizplan-card.js?v=0.4.0`, Typ **JavaScript-Modul**
+2. *Einstellungen → Dashboards → ⋮ → Ressourcen → Ressource hinzufügen*: URL `/local/heizplan-card.js?v=0.4.1`, Typ **JavaScript-Modul**
 3. Bei neuen Versionen Datei ersetzen und `?v=` hochzählen
 
 ## Karte einrichten
@@ -89,7 +89,9 @@ Erweitert (nur YAML): eigene Modi/Farben mit `modes:` (`key`, `label`, `color`, 
 
 Knopf **Temperaturen** zeigt die Temperatur je Modus für diesen Raum; − / + ändert sie sofort. Die Karte schreibt in die Preset-Entitäten von Versatile Thermostat (`number.<raum>_preset_comfort_temp`, `…_eco_temp`, `…_frost_temp`) und findet sie über das Gerät des Thermostats selbst.
 
-Damit es diese Entitäten pro Raum gibt, muss im Versatile Thermostat des Raums **„Zentrale Konfiguration für Presets verwenden“ aus** sein. Sonst zeigt die Karte die Werte nur an. Bei anderen Thermostaten lassen sich eigene `number`/`input_number` im Karten-Editor unter „Preset-Temperaturen“ wählen.
+**Better Thermostat** (ab 1.9) legt für jedes aktivierte Preset ebenfalls eine Temperatur-Entität an (z. B. „Komfort“, „Eco“, „Abwesend“); die Karte findet sie genauso. Better Thermostat hat kein Frostschutz-Preset, deshalb nutzt die Karte dort automatisch „Abwesend“ (`away`) für Frostschutz. Die Presets Komfort, Eco und Abwesend müssen in der Better-Thermostat-Konfiguration aktiviert sein.
+
+Bei Versatile Thermostat gilt: Damit es diese Entitäten pro Raum gibt, muss im Versatile Thermostat des Raums **„Zentrale Konfiguration für Presets verwenden“ aus** sein. Sonst zeigt die Karte die Werte nur an. Bei anderen Thermostaten lassen sich eigene `number`/`input_number` im Karten-Editor unter „Preset-Temperaturen“ wählen.
 
 ## Manuell auf Zeit
 
@@ -101,7 +103,7 @@ Knopf **Manuell** → Temperatur mit − / + wählen, Dauer antippen (1–24 h) 
 
 Das läuft im Hintergrund, auch ohne offenes Dashboard und über einen Neustart hinweg. **Beenden** oder ein Modus-Knopf beendet die Vorgabe sofort. Steht „Wochenplan pausiert“ ohne Vorgabe da, holt **Fortsetzen** den Plan zurück.
 
-In Versatile Thermostat sollte „Dauer manueller Übersteuerung“ (`manual_override_duration_min`) auf 0 stehen, sonst setzt VT die Temperatur schon vorher zurück. Das Vorheizen-Blueprint lässt pausierte Pläne aus.
+Funktioniert mit Versatile und Better Thermostat. In Versatile Thermostat sollte „Dauer manueller Übersteuerung“ (`manual_override_duration_min`) auf 0 stehen, sonst setzt VT die Temperatur schon vorher zurück. Das Vorheizen-Blueprint lässt pausierte Pläne aus.
 
 ## Blueprints
 
@@ -132,4 +134,4 @@ Raumthermostate, Heizperiode, Heizmodus und den Optionstext für „Aus“ ausw�
 
 ## Stand
 
-Version 0.4.0. Mit Testdaten im Browser geprüft, noch nicht in einer echten Home-Assistant-Instanz.
+Version 0.4.1. Mit Testdaten im Browser geprüft, noch nicht in einer echten Home-Assistant-Instanz.
