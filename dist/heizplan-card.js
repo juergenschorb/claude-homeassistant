@@ -4,9 +4,13 @@
  * Speichert die Pläne in der Scheduler-Komponente (HACS, nielsfaber/scheduler-component):
  * je Gruppe gleicher Tage ein Zeitplan, der zu jedem Wechselpunkt
  * climate.set_preset_mode am Raumthermostat aufruft.
+ * Dazu: Preset-Temperaturen je Raum (number-Entitäten von Versatile Thermostat)
+ * und zeitlich begrenzte manuelle Temperatur (pausiert den Plan bis zum Ende).
  */
 
-const CARD_VERSION = "0.3.0";
+const CARD_VERSION = "0.4.0";
+
+const OVERRIDE_HOURS = [1, 2, 3, 4, 5, 6, 8, 12, 24];
 
 const DAYS = [
   { key: "mon", short: "Mo", long: "Montag" },
@@ -34,6 +38,9 @@ const parseTime = (s) => {
   return (h || 0) * 60 + (m || 0);
 };
 const toSchedTime = (m) => (m >= DAY_MIN ? "00:00" : fmt(m));
+const isoDate = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const dayKey = (d) => DAYS[(d.getDay() + 6) % 7].key;
+const deg = (v) => Number(v).toFixed(1).replace(".", ",");
 const snap = (m) => Math.round(m / STEP) * STEP;
 
 function normalizeDay(entries) {
@@ -116,6 +123,16 @@ class HeizplanCard extends HTMLElement {
             },
           ],
         },
+        {
+          type: "expandable",
+          name: "",
+          title: "Preset-Temperaturen (optional)",
+          schema: [
+            { name: "comfort_temperature_entity", selector: { entity: { domain: ["number", "input_number"] } } },
+            { name: "eco_temperature_entity", selector: { entity: { domain: ["number", "input_number"] } } },
+            { name: "frost_temperature_entity", selector: { entity: { domain: ["number", "input_number"] } } },
+          ],
+        },
       ],
       computeHelper: (s) =>
         ({
@@ -123,6 +140,7 @@ class HeizplanCard extends HTMLElement {
           mode_entity: "Zentrale Auswahl, z. B. Aus / Heizen / Urlaub",
           mode_heat: "Optionstext für den Normal-Plan, genau wie in der Auswahl",
           mode_vacation: "Optionstext für den Urlaubsplan (leer = kein Urlaubsplan)",
+          comfort_temperature_entity: "Leer = automatisch (Versatile Thermostat, *_preset_comfort_temp)",
         })[s.name],
       computeLabel: (s) =>
         ({
@@ -136,6 +154,9 @@ class HeizplanCard extends HTMLElement {
           mode_entity: "Heizmodus",
           mode_heat: "Option „Heizen“",
           mode_vacation: "Option „Urlaub“",
+          comfort_temperature_entity: "Temperatur Komfort",
+          eco_temperature_entity: "Temperatur Eco",
+          frost_temperature_entity: "Temperatur Frostschutz",
         })[s.name],
     };
   }
@@ -162,6 +183,11 @@ class HeizplanCard extends HTMLElement {
     if (!this._plans.some((pl) => pl.key === this._plan)) this._plan = this._plans[0].key;
     this._weeks = null;
     this._schedByPlan = {};
+    this._override = null;
+    this._overrideScheds = [];
+    this._pendingTemp = {};
+    this._panel = null;
+    this._man = null;
     this._edit = null;
     this._render();
   }
@@ -262,6 +288,16 @@ class HeizplanCard extends HTMLElement {
         weeks[pl.key] = week;
       }
       this._weeks = weeks;
+      // laufende manuelle Vorgabe (einmaliger Zeitplan, der zum Ende den Plan wieder einschaltet)
+      this._overrideScheds = (all || []).filter((s) => (s.tags || []).includes(this._overrideTag()));
+      this._override = null;
+      for (const s of this._overrideScheds) {
+        const t = s.timeslots?.[0]?.start;
+        if (!s.start_date || !t) continue;
+        const [y, mo, d] = s.start_date.split("-").map(Number);
+        const end = new Date(y, mo - 1, d, Math.floor(parseTime(t) / 60), parseTime(t) % 60);
+        if (!this._override || end > this._override.end) this._override = { end };
+      }
       this._error = null;
       if (!this._unsub && this._hass.connection) {
         this._unsub = this._hass.connection
@@ -332,21 +368,221 @@ class HeizplanCard extends HTMLElement {
       this._edit = null;
       this._toast = "Gespeichert";
       // aktuellen Modus sofort setzen, damit der Raum nicht bis zum nächsten Wechsel wartet
-      const now = new Date();
-      const today = DAYS[(now.getDay() + 6) % 7].key;
-      const cur = this._currentEntry(today, now.getHours() * 60 + now.getMinutes());
-      if (cur && this._planActive(plan)) {
-        await hass.callService("climate", "set_preset_mode", {
-          entity_id: this._config.entity,
-          preset_mode: this._mode(cur.mode).preset,
-        });
-      }
+      if (!this._override) await this._applyCurrentPlan();
     } catch (e) {
       this._toast = `Fehler beim Speichern: ${e.message || e}`;
     }
     this._saving = false;
     await this._load();
+    if (this._override) {
+      // manuelle Vorgabe läuft: neue Pläne gleich wieder pausieren und Ende neu anlegen
+      try {
+        await this._pausePlans();
+        await this._writeOverrideEnd(this._override.end);
+        await this._load();
+      } catch (e) {
+        this._toast = `Fehler: ${e.message || e}`;
+      }
+    }
     setTimeout(() => {
+      this._toast = null;
+      this._render();
+    }, 3000);
+  }
+
+  // Modus eines Plans zu einem Zeitpunkt
+  _entryAt(planKey, date) {
+    const e = this._weeks?.[planKey]?.[dayKey(date)];
+    const entries = e && e.length ? e : [{ start: 0, mode: this._config.default_mode }];
+    const minute = date.getHours() * 60 + date.getMinutes();
+    let cur = entries[0];
+    for (const x of entries) if (x.start <= minute) cur = x;
+    return cur;
+  }
+
+  async _applyCurrentPlan() {
+    const pl = this._plans.find((p) => this._planActive(p));
+    if (!pl) return;
+    const cur = this._entryAt(pl.key, new Date());
+    await this._hass.callService("climate", "set_preset_mode", {
+      entity_id: this._config.entity,
+      preset_mode: this._mode(cur.mode).preset,
+    });
+  }
+
+  // ---------- Preset-Temperaturen ----------
+  _presetTempEntity(m) {
+    const c = this._config;
+    if (c[`${m.key}_temperature_entity`]) return c[`${m.key}_temperature_entity`];
+    const hass = this._hass;
+    const suffix = `_preset_${m.preset}_temp`;
+    const dev = hass?.entities?.[c.entity]?.device_id;
+    if (dev) {
+      const hit = Object.values(hass.entities).find(
+        (e) => e.device_id === dev && e.entity_id.startsWith("number.") && e.entity_id.endsWith(suffix)
+      );
+      if (hit) return hit.entity_id;
+    }
+    const guess = `number.${c.entity.replace(/^climate\./, "")}${suffix}`;
+    return hass?.states?.[guess] ? guess : null;
+  }
+
+  _presetTemp(m) {
+    if (this._pendingTemp[m.key] != null) return this._pendingTemp[m.key];
+    const s = this._hass?.states || {};
+    const ent = this._presetTempEntity(m);
+    const v = ent && parseFloat(s[ent]?.state);
+    if (v != null && !isNaN(v) && ent) return v;
+    const a = s[this._config.entity]?.attributes || {};
+    const t = a.preset_temperatures?.[`${m.preset}_temp`] ?? a[`${m.preset}_temp`];
+    return t != null && !isNaN(parseFloat(t)) ? parseFloat(t) : null;
+  }
+
+  _stepPresetTemp(m, dir) {
+    const ent = this._presetTempEntity(m);
+    const st = ent && this._hass.states[ent];
+    const cur = this._presetTemp(m);
+    if (!st || cur == null) return;
+    const step = parseFloat(st.attributes.step) || 0.5;
+    const min = parseFloat(st.attributes.min) || 5;
+    const max = parseFloat(st.attributes.max) || 30;
+    const v = Math.round(Math.max(min, Math.min(max, cur + dir * step)) * 100) / 100;
+    this._pendingTemp[m.key] = v;
+    this._render();
+    clearTimeout(this._tempTimer?.[m.key]);
+    this._tempTimer = this._tempTimer || {};
+    this._tempTimer[m.key] = setTimeout(async () => {
+      try {
+        await this._hass.callService(ent.split(".")[0], "set_value", { entity_id: ent, value: v });
+      } catch (e) {
+        this._flash(`Fehler: ${e.message || e}`);
+      }
+      setTimeout(() => {
+        delete this._pendingTemp[m.key];
+        this._render();
+      }, 1500);
+    }, 800);
+  }
+
+  // ---------- Manuelle Temperatur für x Stunden ----------
+  _overrideTag() {
+    return `${this._tag}_override`;
+  }
+
+  _planSwitches() {
+    return Object.values(this._schedByPlan)
+      .flat()
+      .map((s) => s.entity_id)
+      .filter(Boolean);
+  }
+
+  async _pausePlans() {
+    const sw = this._planSwitches();
+    if (sw.length) await this._hass.callService("switch", "turn_off", { entity_id: sw });
+  }
+
+  async _removeOverrideScheds() {
+    for (const s of this._overrideScheds) {
+      await this._hass.callService("scheduler", "remove", { entity_id: s.entity_id });
+    }
+    this._overrideScheds = [];
+  }
+
+  // Zum Ende: Pläne wieder einschalten und je Plan (mit dessen Bedingungen) den Modus setzen
+  async _writeOverrideEnd(end) {
+    await this._removeOverrideScheds();
+    const hass = this._hass;
+    const base = {
+      weekdays: [dayKey(end)],
+      start_date: isoDate(end),
+      end_date: isoDate(end),
+      repeat_type: "single",
+      tags: [this._overrideTag()],
+    };
+    const time = fmt(end.getHours() * 60 + end.getMinutes());
+    const room = this._name();
+    const sw = this._planSwitches();
+    if (sw.length) {
+      await hass.callService("scheduler", "add", {
+        ...base,
+        name: `Heizplan ${room} Manuell Ende`,
+        timeslots: [{ start: time, actions: sw.map((e) => ({ service: "switch.turn_on", entity_id: e })) }],
+      });
+    }
+    for (const pl of this._plans) {
+      const cur = this._entryAt(pl.key, end);
+      await hass.callService("scheduler", "add", {
+        ...base,
+        name: `Heizplan ${room} Manuell Ende ${pl.label}`,
+        timeslots: [
+          {
+            start: time,
+            ...(pl.conditions.length
+              ? { conditions: pl.conditions.map((c) => ({ ...c, match_type: "is" })), condition_type: "and" }
+              : {}),
+            actions: [
+              {
+                service: "climate.set_preset_mode",
+                entity_id: this._config.entity,
+                service_data: { preset_mode: this._mode(cur.mode).preset },
+              },
+            ],
+          },
+        ],
+      });
+    }
+  }
+
+  async _startOverride() {
+    const { temp, hours } = this._man;
+    const end = new Date(Date.now() + hours * 3600000);
+    end.setSeconds(0, 0);
+    this._busy = true;
+    this._render();
+    try {
+      await this._pausePlans();
+      await this._hass.callService("climate", "set_temperature", { entity_id: this._config.entity, temperature: temp });
+      await this._writeOverrideEnd(end);
+      this._panel = null;
+      this._flash(`${deg(temp)} °C bis ${fmt(end.getHours() * 60 + end.getMinutes())}`);
+    } catch (e) {
+      this._flash(`Fehler: ${e.message || e}`);
+    }
+    this._busy = false;
+    await this._load();
+  }
+
+  async _cancelOverride(preset) {
+    this._busy = true;
+    this._render();
+    try {
+      await this._removeOverrideScheds();
+      const sw = this._planSwitches();
+      if (sw.length) await this._hass.callService("switch", "turn_on", { entity_id: sw });
+      this._override = null;
+      if (preset) {
+        await this._hass.callService("climate", "set_preset_mode", { entity_id: this._config.entity, preset_mode: preset });
+      } else {
+        await this._applyCurrentPlan();
+      }
+    } catch (e) {
+      this._flash(`Fehler: ${e.message || e}`);
+    }
+    this._busy = false;
+    await this._load();
+  }
+
+  _plansPaused() {
+    const s = this._hass?.states || {};
+    const sw = this._planSwitches();
+    return sw.length > 0 && sw.every((e) => s[e]?.state === "off");
+  }
+
+  _flash(msg) {
+    this._toast = msg;
+    this._render();
+    clearTimeout(this._toastTimer);
+    this._toastTimer = setTimeout(() => {
       this._toast = null;
       this._render();
     }, 3000);
@@ -391,7 +627,14 @@ class HeizplanCard extends HTMLElement {
     const now = new Date();
     const todayIdx = (now.getDay() + 6) % 7;
     const nowMin = now.getHours() * 60 + now.getMinutes();
-    const presetMode = preset ? this._mode(this._modeByPreset(preset)) : null;
+    const known = preset && this._modes.some((m) => m.preset === preset);
+    const presetMode = known
+      ? this._mode(this._modeByPreset(preset))
+      : preset && preset !== "none"
+        ? this._mode(preset)
+        : soll != null
+          ? { key: "manual", label: "Manuell", color: "#E0569B" }
+          : null;
 
     const rows = DAYS.map((d, i) => {
       const entries = this._dayEntries(d.key);
@@ -426,11 +669,35 @@ class HeizplanCard extends HTMLElement {
       .join("");
 
     const presetBtns = this._modes
-      .map(
-        (m) =>
-          `<button class="pbtn ${presetMode?.key === m.key ? "active" : ""}" data-preset="${m.preset}" style="--c:${m.color}">${m.label}</button>`
-      )
+      .map((m) => {
+        const t = this._presetTemp(m);
+        return `<button class="pbtn ${presetMode?.key === m.key ? "active" : ""}" data-preset="${m.preset}" style="--c:${m.color}">${m.label}${
+          t != null ? `<small>${deg(t)}°</small>` : ""
+        }</button>`;
+      })
       .join("");
+    const tools = `<div class="tools">
+        <button class="tool ${this._panel === "temps" ? "on" : ""}" data-panel="temps"><ha-icon icon="mdi:thermometer-lines"></ha-icon>Temperaturen</button>
+        <button class="tool ${this._panel === "manual" || this._override ? "on" : ""}" data-panel="manual"><ha-icon icon="mdi:timer-outline"></ha-icon>Manuell</button>
+      </div>`;
+    const ov = this._override;
+    const ovHtml = ov
+      ? (() => {
+          const rest = Math.max(0, Math.round((ov.end - now) / 60000));
+          const endTxt = `${ov.end.toDateString() === now.toDateString() ? "" : `${DAYS[(ov.end.getDay() + 6) % 7].short} `}${fmt(
+            ov.end.getHours() * 60 + ov.end.getMinutes()
+          )}`;
+          return `<div class="override">
+            <ha-icon icon="mdi:timer-outline"></ha-icon>
+            <div><b>Manuell${soll != null ? ` ${deg(soll)} °C` : ""} bis ${endTxt}</b>
+            <span>noch ${rest >= 60 ? `${Math.floor(rest / 60)} h ` : ""}${rest % 60} min · Wochenplan pausiert</span></div>
+            <button class="ovend">Beenden</button>
+          </div>`;
+        })()
+      : this._plansPaused()
+        ? `<div class="override"><ha-icon icon="mdi:pause-circle-outline"></ha-icon><div><b>Wochenplan pausiert</b><span>Keine manuelle Vorgabe aktiv</span></div><button class="ovend">Fortsetzen</button></div>`
+        : "";
+    const panel = this._panel === "temps" ? this._tempsHtml() : this._panel === "manual" ? this._manualHtml(soll, a) : "";
 
     if (this._edit) {
       this.shadowRoot.innerHTML = `<style>${STYLE}</style><ha-card>${this._editorHtml()}
@@ -457,6 +724,9 @@ class HeizplanCard extends HTMLElement {
           <div class="ist">${ist != null && !isNaN(ist) ? Number(ist).toFixed(1) : "–"}<small>°C</small></div>
         </div>
         <div class="presets">${presetBtns}</div>
+        ${ovHtml}
+        ${tools}
+        ${panel}
         ${this._error ? `<div class="err">${this._error}</div>` : ""}
         ${this._configWarning() ? `<div class="err">${this._configWarning()}</div>` : ""}
         ${tabs}
@@ -480,12 +750,100 @@ class HeizplanCard extends HTMLElement {
     );
     this.shadowRoot.querySelectorAll(".pbtn").forEach((b) =>
       b.addEventListener("click", () =>
-        this._hass.callService("climate", "set_preset_mode", {
-          entity_id: this._config.entity,
-          preset_mode: b.dataset.preset,
-        })
+        this._override
+          ? this._cancelOverride(b.dataset.preset)
+          : this._hass.callService("climate", "set_preset_mode", {
+              entity_id: this._config.entity,
+              preset_mode: b.dataset.preset,
+            })
       )
     );
+    this._bindPanels(soll, a);
+  }
+
+  _tempsHtml() {
+    const rows = this._modes
+      .map((m) => {
+        const t = this._presetTemp(m);
+        const ent = this._presetTempEntity(m);
+        return `<div class="trow">
+          <i style="background:${m.color}"></i><span class="tl">${m.label}</span>
+          ${
+            ent
+              ? `<button class="icon step" data-k="${m.key}" data-d="-1"><ha-icon icon="mdi:minus"></ha-icon></button>
+                 <span class="tv">${t != null ? `${deg(t)} °C` : "–"}</span>
+                 <button class="icon step" data-k="${m.key}" data-d="1"><ha-icon icon="mdi:plus"></ha-icon></button>`
+              : `<span class="tv ro">${t != null ? `${deg(t)} °C` : "–"}</span>`
+          }
+        </div>`;
+      })
+      .join("");
+    const missing = this._modes.some((m) => !this._presetTempEntity(m));
+    return `<div class="panel">
+      ${rows}
+      ${
+        missing
+          ? `<div class="phint">Keine eigene Temperatur-Entität gefunden. In Versatile Thermostat für diesen Raum „Zentrale Konfiguration für Presets“ ausschalten oder die Entität im Karten-Editor wählen.</div>`
+          : `<div class="phint">Gilt nur für diesen Raum und wird sofort übernommen.</div>`
+      }
+    </div>`;
+  }
+
+  _manualHtml(soll, a) {
+    const step = parseFloat(a.target_temp_step) || 0.5;
+    if (!this._man) {
+      const base = soll != null ? Math.round(Number(soll) / step) * step : 21;
+      this._man = { temp: base, hours: 3 };
+    }
+    const m = this._man;
+    const end = new Date(Date.now() + m.hours * 3600000);
+    const endTxt = `${m.hours >= 24 || end.getDate() !== new Date().getDate() ? `${DAYS[(end.getDay() + 6) % 7].short} ` : ""}${fmt(
+      end.getHours() * 60 + end.getMinutes()
+    )}`;
+    const chips = OVERRIDE_HOURS.map(
+      (h) => `<button class="hchip ${h === m.hours ? "on" : ""}" data-h="${h}">${h} h</button>`
+    ).join("");
+    return `<div class="panel">
+      <div class="mtemp">
+        <button class="icon mstep" data-d="-1"><ha-icon icon="mdi:minus"></ha-icon></button>
+        <span>${deg(m.temp)}<small> °C</small></span>
+        <button class="icon mstep" data-d="1"><ha-icon icon="mdi:plus"></ha-icon></button>
+      </div>
+      <div class="hchips">${chips}</div>
+      <button class="mstart" ${this._busy ? "disabled" : ""}>${this._override ? "Ändern" : "Starten"} · bis ${endTxt}</button>
+      <div class="phint">Der Wochenplan pausiert bis dahin und übernimmt danach wieder.</div>
+    </div>`;
+  }
+
+  _bindPanels(soll, a) {
+    const root = this.shadowRoot;
+    root.querySelectorAll(".tool").forEach((b) =>
+      b.addEventListener("click", () => {
+        this._panel = this._panel === b.dataset.panel ? null : b.dataset.panel;
+        if (this._panel === "manual") this._man = null;
+        this._render();
+      })
+    );
+    root.querySelectorAll(".step").forEach((b) =>
+      b.addEventListener("click", () => this._stepPresetTemp(this._mode(b.dataset.k), +b.dataset.d))
+    );
+    root.querySelectorAll(".mstep").forEach((b) =>
+      b.addEventListener("click", () => {
+        const step = parseFloat(a.target_temp_step) || 0.5;
+        const min = parseFloat(a.min_temp) || 5;
+        const max = parseFloat(a.max_temp) || 30;
+        this._man.temp = Math.max(min, Math.min(max, Math.round((this._man.temp + +b.dataset.d * step) * 100) / 100));
+        this._render();
+      })
+    );
+    root.querySelectorAll(".hchip").forEach((b) =>
+      b.addEventListener("click", () => {
+        this._man.hours = +b.dataset.h;
+        this._render();
+      })
+    );
+    root.querySelector(".mstart")?.addEventListener("click", () => this._startOverride());
+    root.querySelector(".ovend")?.addEventListener("click", () => this._cancelOverride());
   }
 
   // ---------- Tageseditor ----------
@@ -721,6 +1079,31 @@ const STYLE = `
   .ist small { font-size: 16px; color: var(--fg2); margin-left: 2px; }
   .presets { display: flex; gap: 8px; margin: 14px 0 6px; }
   .pbtn { flex: 1; background: var(--bg2); color: var(--fg); border: 1px solid transparent; border-radius: 12px; padding: 8px 4px; font-size: 13px; cursor: pointer; }
+  .pbtn small { display: block; font-size: 12px; opacity: .75; margin-top: 2px; }
+  .tools { display: flex; gap: 8px; margin-top: 8px; }
+  .tool { flex: 1; background: none; border: 1px solid #4a4a4a; color: var(--fg2); border-radius: 12px; padding: 6px; font-size: 13px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+  .tool ha-icon { --mdc-icon-size: 17px; }
+  .tool.on { border-color: var(--acc); color: var(--acc); }
+  .panel { background: var(--bg2); border-radius: 14px; padding: 10px 12px; margin-top: 8px; }
+  .trow { display: grid; grid-template-columns: 14px 1fr 32px 72px 32px; align-items: center; gap: 6px; padding: 3px 0; font-size: 14px; }
+  .trow i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; }
+  .tv { text-align: center; font-weight: 600; }
+  .tv.ro { grid-column: 3 / 6; text-align: right; color: var(--fg2); font-weight: 400; }
+  .phint { font-size: 11px; color: var(--fg2); margin-top: 6px; }
+  .mtemp { display: flex; align-items: center; justify-content: center; gap: 18px; }
+  .mtemp span { font-size: 34px; font-weight: 300; min-width: 110px; text-align: center; }
+  .mtemp small { font-size: 15px; color: var(--fg2); }
+  .mtemp .icon { border: 1px solid #4a4a4a; padding: 6px; }
+  .hchips { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin: 10px 0; }
+  .hchip { background: var(--bg); border: none; color: var(--fg); border-radius: 10px; padding: 6px 10px; font-size: 13px; cursor: pointer; }
+  .hchip.on { background: var(--acc); color: #111; font-weight: 600; }
+  .mstart { width: 100%; background: #E0569B; color: #fff; border: none; border-radius: 12px; padding: 10px; font-weight: 600; cursor: pointer; }
+  .mstart[disabled] { opacity: .5; }
+  .override { display: flex; align-items: center; gap: 10px; background: color-mix(in srgb, #E0569B 18%, var(--bg2)); border-radius: 14px; padding: 8px 10px; margin-top: 8px; font-size: 13px; }
+  .override > ha-icon { color: #E0569B; }
+  .override > div { flex: 1; display: flex; flex-direction: column; }
+  .override span { color: var(--fg2); font-size: 12px; }
+  .ovend { background: var(--bg); color: var(--fg); border: none; border-radius: 10px; padding: 6px 12px; cursor: pointer; }
   .pbtn.active { border-color: var(--c); color: var(--c); background: color-mix(in srgb, var(--c) 15%, var(--bg2)); font-weight: 600; }
   .week { margin-top: 10px; }
   .tabs { display: flex; gap: 6px; margin-top: 12px; background: var(--bg2); border-radius: 12px; padding: 4px; }
@@ -793,7 +1176,7 @@ window.customCards = window.customCards || [];
 window.customCards.push({
   type: "heizplan-card",
   name: "Heizplan Card",
-  description: "Wochenplan pro Raum mit Tageseditor, Normal-/Urlaubsplan (speichert in der Scheduler-Komponente)",
+  description: "Wochenplan pro Raum mit Tageseditor, Normal-/Urlaubsplan, Preset-Temperaturen und manueller Temperatur auf Zeit",
   preview: false,
 });
 console.info(`%c HEIZPLAN-CARD %c ${CARD_VERSION} `, "background:#69C350;color:#111", "background:#2b2b2b;color:#fff");

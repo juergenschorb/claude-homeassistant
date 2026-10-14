@@ -6,6 +6,10 @@ Wochenplan pro Raum für Home Assistant: Komfort, Eco und Frostschutz als farbig
 | --- | --- |
 | ![Wochenansicht](docs/vorschau-woche.png) | ![Tageseditor](docs/vorschau-tageseditor.png) |
 
+| Temperaturen je Raum | Manuell auf Zeit | Manuell aktiv |
+| --- | --- | --- |
+| ![Temperaturen](docs/vorschau-temperaturen.png) | ![Manuell](docs/vorschau-manuell.png) | ![Manuell aktiv](docs/vorschau-manuell-aktiv.png) |
+
 ## Funktionen
 
 - Wochenansicht Mo–So mit Markierung „jetzt“
@@ -13,6 +17,8 @@ Wochenplan pro Raum für Home Assistant: Komfort, Eco und Frostschutz als farbig
 - Knöpfe zum sofortigen Umschalten (Komfort / Eco / Frostschutz)
 - Tageseditor: auf den Balken tippen fügt einen Abschnitt ein, Griffe ziehen verschiebt (15-min-Raster), Modus pro Abschnitt, auf andere Tage übernehmen (Mo–Fr, Sa–So, Alle)
 - Normal- und Urlaubsplan als Reiter; jeder Plan läuft nur, wenn Heizperiode und Heizmodus passen
+- **Temperaturen je Raum**: Komfort/Eco/Frostschutz-Temperatur pro Raum mit − / + einstellen
+- **Manuell auf Zeit**: z. B. 26 °C für 5 Stunden; der Wochenplan pausiert so lange und übernimmt danach wieder
 - Komplett per GUI konfigurierbar
 
 Dazu zwei Blueprints:
@@ -27,8 +33,6 @@ Dazu zwei Blueprints:
 
 ## Installation
 
-> Vorher ein Backup machen.
-
 ### Über HACS
 
 1. HACS → ⋮ → **Benutzerdefinierte Repositories**
@@ -39,7 +43,7 @@ Dazu zwei Blueprints:
 ### Manuell
 
 1. `dist/heizplan-card.js` nach `/config/www/heizplan-card.js` kopieren
-2. *Einstellungen → Dashboards → ⋮ → Ressourcen → Ressource hinzufügen*: URL `/local/heizplan-card.js?v=0.3.0`, Typ **JavaScript-Modul**
+2. *Einstellungen → Dashboards → ⋮ → Ressourcen → Ressource hinzufügen*: URL `/local/heizplan-card.js?v=0.4.0`, Typ **JavaScript-Modul**
 3. Bei neuen Versionen Datei ersetzen und `?v=` hochzählen
 
 ## Karte einrichten
@@ -58,6 +62,8 @@ Dashboard bearbeiten → *Karte hinzufügen* → **Heizplan Card**. Alles lässt
 | Heizmodus | zentrale Auswahl (`input_select`/`select`), z. B. Aus / Heizen / Urlaub |
 | Option „Heizen“ | Optionstext, bei dem der Normal-Plan läuft |
 | Option „Urlaub“ | Optionstext, bei dem der Urlaubsplan läuft (leer = kein Urlaubsplan) |
+
+| Temperatur Komfort / Eco / Frostschutz | `number` je Preset (optional, sonst automatisch gefunden) |
 
 Stimmt ein Optionstext nicht mit der Auswahl überein, zeigt die Karte einen Hinweis mit den vorhandenen Optionen.
 
@@ -78,6 +84,24 @@ mode_vacation: Urlaub
 ```
 
 Erweitert (nur YAML): eigene Modi/Farben mit `modes:` (`key`, `label`, `color`, optional `preset`), eigene Pläne mit `plans:` (`key`, `label`, `conditions: [{entity, state}]`), eigener Tag mit `tag:`.
+
+## Temperaturen je Raum
+
+Knopf **Temperaturen** zeigt die Temperatur je Modus für diesen Raum; − / + ändert sie sofort. Die Karte schreibt in die Preset-Entitäten von Versatile Thermostat (`number.<raum>_preset_comfort_temp`, `…_eco_temp`, `…_frost_temp`) und findet sie über das Gerät des Thermostats selbst.
+
+Damit es diese Entitäten pro Raum gibt, muss im Versatile Thermostat des Raums **„Zentrale Konfiguration für Presets verwenden“ aus** sein. Sonst zeigt die Karte die Werte nur an. Bei anderen Thermostaten lassen sich eigene `number`/`input_number` im Karten-Editor unter „Preset-Temperaturen“ wählen.
+
+## Manuell auf Zeit
+
+Knopf **Manuell** → Temperatur mit − / + wählen, Dauer antippen (1–24 h) → **Starten**:
+
+1. Die Wochenpläne dieses Raums werden pausiert (Scheduler-Schalter aus).
+2. Das Thermostat bekommt die gewählte Temperatur (`climate.set_temperature`).
+3. Ein einmaliger Zeitplan (Tag `heizplan_<raum>_override`) schaltet zum Ende die Pläne wieder ein und setzt den Modus, der laut Plan dann gilt (mit denselben Bedingungen wie Normal/Urlaub). Danach löscht er sich selbst.
+
+Das läuft im Hintergrund, auch ohne offenes Dashboard und über einen Neustart hinweg. **Beenden** oder ein Modus-Knopf beendet die Vorgabe sofort. Steht „Wochenplan pausiert“ ohne Vorgabe da, holt **Fortsetzen** den Plan zurück.
+
+In Versatile Thermostat sollte „Dauer manueller Übersteuerung“ (`manual_override_duration_min`) auf 0 stehen, sonst setzt VT die Temperatur schon vorher zurück. Das Vorheizen-Blueprint lässt pausierte Pläne aus.
 
 ## Blueprints
 
@@ -103,8 +127,9 @@ Raumthermostate, Heizperiode, Heizmodus und den Optionstext für „Aus“ ausw�
 - Pläne liegen in der Scheduler-Komponente mit dem Tag `heizplan_<raum>` (Normal) bzw. `heizplan_<raum>_urlaub`, je Gruppe gleicher Tage ein Zeitplan.
 - Jeder Wechselpunkt ruft `climate.set_preset_mode` auf; die Bedingungen (Heizperiode, Heizmodus) hängen an jedem Zeitraum.
 - Beim Speichern werden die bisherigen Pläne dieses Raums und Plans ersetzt und der gültige Modus sofort gesetzt.
+- Manuelle Vorgaben liegen als einmalige Zeitpläne mit dem Tag `heizplan_<raum>_override`.
 - Die Pläne erscheinen auch in der Scheduler Card. Zum Bearbeiten pro Raum nur eine der beiden Karten verwenden.
 
 ## Stand
 
-Version 0.3.0. Mit Testdaten im Browser geprüft, noch nicht in einer echten Home-Assistant-Instanz.
+Version 0.4.0. Mit Testdaten im Browser geprüft, noch nicht in einer echten Home-Assistant-Instanz.
