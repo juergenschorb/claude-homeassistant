@@ -8,7 +8,7 @@
  * und zeitlich begrenzte manuelle Temperatur (pausiert den Plan bis zum Ende).
  */
 
-const CARD_VERSION = "0.4.1";
+const CARD_VERSION = "0.4.2";
 
 const OVERRIDE_HOURS = [1, 2, 3, 4, 5, 6, 8, 12, 24];
 
@@ -218,12 +218,23 @@ class HeizplanCard extends HTMLElement {
 
   set hass(hass) {
     const first = !this._hass;
+    const old = this._hass;
     this._hass = hass;
     if (first) {
       this._adaptModes();
       this._load();
     }
-    if (!this._edit) this._render();
+    // nur neu zeichnen, wenn sich eine Entität dieser Karte geändert hat;
+    // sonst ersetzt jede Zustandsänderung in HA die Knöpfe und Klicks gehen verloren
+    if (!this._edit && (first || this._relevantEntities().some((e) => old.states[e] !== hass.states[e]))) this._render();
+  }
+
+  _relevantEntities() {
+    const c = this._config;
+    const list = [c.entity, c.temperature_entity, c.window_entity, c.valve_entity, c.season_entity, c.mode_entity];
+    for (const m of this._modes) list.push(this._presetTempEntity(m));
+    list.push(...this._planSwitches());
+    return list.filter(Boolean);
   }
 
   getCardSize() {
