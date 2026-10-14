@@ -44,7 +44,7 @@ Dazu zwei Blueprints:
 ### Manuell
 
 1. `dist/heizplan-card.js` nach `/config/www/heizplan-card.js` kopieren
-2. *Einstellungen → Dashboards → ⋮ → Ressourcen → Ressource hinzufügen*: URL `/local/heizplan-card.js?v=0.5.0`, Typ **JavaScript-Modul**
+2. *Einstellungen → Dashboards → ⋮ → Ressourcen → Ressource hinzufügen*: URL `/local/heizplan-card.js?v=0.5.1`, Typ **JavaScript-Modul**
 3. Bei neuen Versionen Datei ersetzen und `?v=` hochzählen
 
 ## Karte einrichten
@@ -61,7 +61,7 @@ Dashboard bearbeiten → *Karte hinzufügen* → **Heizplan Card**. Alles lässt
 | Grundmodus | Modus für Tage ohne Plan (Standard Eco) |
 | Heizperiode | Schalter (`input_boolean`, `binary_sensor`, `switch`); Pläne laufen nur, wenn er an ist |
 | Heizmodus | zentrale Auswahl (`input_select`/`select`), z. B. Aus / Heizen / Urlaub |
-| Arbeitstag-Sensor | optional, z. B. aus der Integration „Workday“: an = Arbeitstag, aus = Wochenende/Feiertag. Schaltet die Zeile „Feiertag“ ein |
+| Feiertage | optional: Feiertagskalender (`calendar.…`, z. B. Integration „Feiertage“/Holiday) oder Arbeitstag-Sensor (Workday). Schaltet die Zeile „Feiertag“ ein |
 | Option „Heizen“ | Optionstext, bei dem der Normal-Plan läuft |
 | Option „Urlaub“ | Optionstext, bei dem der Urlaubsplan läuft (leer = kein Urlaubsplan) |
 
@@ -91,13 +91,13 @@ Erweitert (nur YAML): eigene Modi/Farben mit `modes:` (`key`, `label`, `color`, 
 
 ![Feiertag](docs/vorschau-feiertag.png)
 
-1. Integration **Workday** hinzufügen (*Einstellungen → Geräte & Dienste → Integration hinzufügen*, nach „Workday“ suchen): Land Deutschland, euer Bundesland, Arbeitstage Mo–Fr, ausgeschlossen Sa, So und Feiertage. Das ergibt einen Sensor, der an Arbeitstagen „an“ und an Feiertagen „aus“ ist.
-2. In der Karte unter „Heizperiode und Heizmodus“ diesen Sensor als **Arbeitstag-Sensor** wählen.
+1. Feiertagskalender auswählen: die Integration **Feiertage** (Holiday) legt z. B. `calendar.deutschland_bw` an, der an Feiertagen „an“ ist. Alternativ geht ein Arbeitstag-Sensor der Integration **Workday** (an Arbeitstagen „an“).
+2. In der Karte unter „Heizperiode und Heizmodus“ diese Entität bei **Feiertage** wählen.
 3. Die Karte zeigt eine Zeile **Ft** unter Sonntag. Einmal einen Tag öffnen und **Speichern**, damit die Pläne neu angelegt werden.
 
-So funktioniert es: Mo–Fr-Zeitpläne laufen nur, wenn der Sensor „an“ ist. Ein zusätzlicher Feiertags-Zeitplan für Mo–Fr läuft, wenn er „aus“ ist. Solange „Feiertag“ nicht eigens bearbeitet wurde, übernimmt er den Sonntag. Fällt ein Feiertag auf einen Samstag, gilt der Samstagsplan. Mit Urlaubsplan gilt das für beide Pläne getrennt.
+So funktioniert es: Mo–Fr-Zeitpläne laufen nur an Nicht-Feiertagen. Ein zusätzlicher Feiertags-Zeitplan für Mo–Fr läuft an Feiertagen. Solange „Feiertag“ nicht eigens bearbeitet wurde, übernimmt er den Sonntag. Fällt ein Feiertag auf einen Samstag, gilt der Samstagsplan. Mit Urlaubsplan gilt das für beide Pläne getrennt.
 
-Im Blueprint „Vorheizen“ denselben Sensor unter **Arbeitstag-Sensor** eintragen, damit an Feiertagen nicht für den Werktags-Komfort vorgeheizt wird.
+Im Blueprint „Vorheizen“ dieselbe Entität unter **Feiertage** eintragen, damit an Feiertagen nicht für den Werktags-Komfort vorgeheizt wird.
 
 ## Temperaturen je Raum
 
@@ -148,4 +148,4 @@ Raumthermostate, Heizperiode, Heizmodus und den Optionstext für „Aus“ ausw�
 
 ## Stand
 
-Version 0.5.0. Mit Testdaten im Browser geprüft, noch nicht in einer echten Home-Assistant-Instanz.
+Version 0.5.1. Mit Testdaten im Browser geprüft, noch nicht in einer echten Home-Assistant-Instanz.

@@ -8,7 +8,7 @@
  * und zeitlich begrenzte manuelle Temperatur (pausiert den Plan bis zum Ende).
  */
 
-const CARD_VERSION = "0.5.0";
+const CARD_VERSION = "0.5.1";
 
 const OVERRIDE_HOURS = [1, 2, 3, 4, 5, 6, 8, 12, 24];
 
@@ -22,7 +22,8 @@ const DAYS = [
   { key: "sun", short: "So", long: "Sonntag" },
 ];
 
-// Feiertag: eigener Tag, gilt Mo–Fr, wenn der Arbeitstag-Sensor "off" meldet
+// Feiertag: eigener Tag, gilt Mo–Fr an Feiertagen. Quelle: Feiertagskalender (calendar.*, "on" = Feiertag)
+// oder Arbeitstag-Sensor (Workday, "off" = Feiertag)
 const HOL = { key: "hol", short: "Ft", long: "Feiertag" };
 const WORKDAYS = ["mon", "tue", "wed", "thu", "fri"];
 
@@ -117,7 +118,7 @@ class HeizplanCard extends HTMLElement {
           schema: [
             { name: "season_entity", selector: { entity: { domain: ["input_boolean", "binary_sensor", "switch"] } } },
             { name: "mode_entity", selector: { entity: { domain: ["input_select", "select"] } } },
-            { name: "workday_entity", selector: { entity: { domain: ["binary_sensor", "input_boolean"] } } },
+            { name: "workday_entity", selector: { entity: { domain: ["calendar", "binary_sensor", "input_boolean"] } } },
             {
               type: "grid",
               name: "",
@@ -143,7 +144,7 @@ class HeizplanCard extends HTMLElement {
         ({
           season_entity: "Plan läuft nur, wenn dieser Schalter an ist",
           mode_entity: "Zentrale Auswahl, z. B. Aus / Heizen / Urlaub",
-          workday_entity: "z. B. Integration „Arbeitstag“ (Workday): an = Arbeitstag, aus = Feiertag. Dann gibt es eine Zeile „Feiertag“",
+          workday_entity: "Feiertagskalender (z. B. Integration „Feiertage“) oder Arbeitstag-Sensor (Workday). Dann gibt es eine Zeile „Feiertag“",
           mode_heat: "Optionstext für den Normal-Plan, genau wie in der Auswahl",
           mode_vacation: "Optionstext für den Urlaubsplan (leer = kein Urlaubsplan)",
           comfort_temperature_entity: "Leer = automatisch (Versatile oder Better Thermostat)",
@@ -158,7 +159,7 @@ class HeizplanCard extends HTMLElement {
           default_mode: "Grundmodus für neue Pläne",
           season_entity: "Heizperiode",
           mode_entity: "Heizmodus",
-          workday_entity: "Arbeitstag-Sensor (Feiertage, optional)",
+          workday_entity: "Feiertage (optional)",
           mode_heat: "Option „Heizen“",
           mode_vacation: "Option „Urlaub“",
           comfort_temperature_entity: "Temperatur Komfort",
@@ -320,7 +321,7 @@ class HeizplanCard extends HTMLElement {
             mode: this._modeByPreset(t.actions?.[0]?.service_data?.preset_mode),
           }));
           const wd = this._config.workday_entity;
-          const isHol = (s.timeslots?.[0]?.conditions || []).some((c) => c.entity_id === wd && String(c.value) === "off");
+          const isHol = (s.timeslots?.[0]?.conditions || []).some((c) => c.entity_id === wd && String(c.value) === this._holValue());
           if (wd && isHol) week[HOL.key] = normalizeDay(entries);
           else for (const d of expandWeekdays(s.weekdays)) week[d] = normalizeDay(entries);
         }
@@ -357,6 +358,11 @@ class HeizplanCard extends HTMLElement {
     return [{ start: 0, mode: this._config.default_mode }];
   }
 
+  // Zustand der Feiertags-Entität an einem Feiertag: Kalender "on", Arbeitstag-Sensor "off"
+  _holValue() {
+    return String(this._config.workday_entity || "").startsWith("calendar.") ? "on" : "off";
+  }
+
   _days() {
     return this._config.workday_entity ? [...DAYS, HOL] : DAYS;
   }
@@ -369,7 +375,7 @@ class HeizplanCard extends HTMLElement {
       wd &&
       WORKDAYS.includes(k) &&
       date.toDateString() === new Date().toDateString() &&
-      this._hass?.states?.[wd]?.state === "off"
+      this._hass?.states?.[wd]?.state === this._holValue()
     )
       return HOL.key;
     return k;
@@ -405,7 +411,8 @@ class HeizplanCard extends HTMLElement {
       for (const g of groups.values()) {
         i += 1;
         const conds = [...plan.conditions];
-        if (g.kind) conds.push({ entity_id: wd, value: g.kind === "werktag" ? "on" : "off" });
+        const hv = this._holValue();
+        if (g.kind) conds.push({ entity_id: wd, value: g.kind === "feiertag" ? hv : hv === "on" ? "off" : "on" });
         const timeslots = g.entries.map((e, idx) => ({
           start: fmt(e.start),
           stop: toSchedTime(idx + 1 < g.entries.length ? g.entries[idx + 1].start : DAY_MIN),

@@ -90,14 +90,16 @@ blueprint:
         entity:
           domain: binary_sensor
     workday_entity:
-      name: Arbeitstag-Sensor (optional)
+      name: Feiertage (optional)
       description: >
-        Derselbe Sensor wie in der Heizplan Card (an = Arbeitstag, aus = Feiertag).
-        Dann zählt heute nur der passende Plan (Werktag oder Feiertag).
+        Dieselbe Entität wie in der Heizplan Card: Feiertagskalender (an = Feiertag)
+        oder Arbeitstag-Sensor (an = Arbeitstag). Dann zählt heute nur der passende
+        Plan (Werktag oder Feiertag).
       default: ""
       selector:
         entity:
           domain:
+            - calendar
             - binary_sensor
             - input_boolean
     extra_conditions:
@@ -167,7 +169,9 @@ action:
               naechster_komfort: >
                 {% set ns = namespace(t=none) %}
                 {% set heute = now().date() | string %}
-                {% set arbeitstag = is_state(workday_entity, 'on') if workday_entity else none %}
+                {% set arbeitstag = none if not workday_entity
+                     else is_state(workday_entity, 'off') if workday_entity.startswith('calendar.')
+                     else is_state(workday_entity, 'on') %}
                 {% for s in states.switch
                      if s.state != 'off'
                      and schedule_tag in (s.attributes.tags | default([], true))
