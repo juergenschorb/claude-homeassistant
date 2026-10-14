@@ -89,6 +89,17 @@ blueprint:
       selector:
         entity:
           domain: binary_sensor
+    workday_entity:
+      name: Arbeitstag-Sensor (optional)
+      description: >
+        Derselbe Sensor wie in der Heizplan Card (an = Arbeitstag, aus = Feiertag).
+        Dann zählt heute nur der passende Plan (Werktag oder Feiertag).
+      default: ""
+      selector:
+        entity:
+          domain:
+            - binary_sensor
+            - input_boolean
     extra_conditions:
       name: Nur vorheizen wenn … (optional)
       description: z. B. Heizperiode an und Heizmodus = Heizen
@@ -110,6 +121,7 @@ variables:
   window_entity: !input window_entity
   outdoor_sensor: !input outdoor_sensor
   outdoor_factor: !input outdoor_factor
+  workday_entity: !input workday_entity
 
 trigger:
   - platform: time_pattern
@@ -154,13 +166,20 @@ action:
           - variables:
               naechster_komfort: >
                 {% set ns = namespace(t=none) %}
+                {% set heute = now().date() | string %}
+                {% set arbeitstag = is_state(workday_entity, 'on') if workday_entity else none %}
                 {% for s in states.switch
                      if s.state != 'off'
                      and schedule_tag in (s.attributes.tags | default([], true))
                      and s.attributes.next_slot is not none
                      and s.attributes.next_trigger %}
+                  {% set tags = s.attributes.tags | default([], true) %}
                   {% set a = (s.attributes.actions | default([], true))[s.attributes.next_slot] | default({}) %}
-                  {% if (a.service_data | default({})).preset_mode | default('') == comfort_preset %}
+                  {% set falscher_tag = arbeitstag is not none
+                       and (as_datetime(s.attributes.next_trigger) | as_local).date() | string == heute
+                       and ((not arbeitstag and (schedule_tag ~ '_werktag') in tags)
+                            or (arbeitstag and (schedule_tag ~ '_feiertag') in tags)) %}
+                  {% if not falscher_tag and (a.service_data | default({})).preset_mode | default('') == comfort_preset %}
                     {% set t = as_timestamp(s.attributes.next_trigger) %}
                     {% if ns.t is none or t < ns.t %}{% set ns.t = t %}{% endif %}
                   {% endif %}

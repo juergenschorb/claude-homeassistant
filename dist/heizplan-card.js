@@ -8,7 +8,7 @@
  * und zeitlich begrenzte manuelle Temperatur (pausiert den Plan bis zum Ende).
  */
 
-const CARD_VERSION = "0.4.2";
+const CARD_VERSION = "0.5.0";
 
 const OVERRIDE_HOURS = [1, 2, 3, 4, 5, 6, 8, 12, 24];
 
@@ -21,6 +21,10 @@ const DAYS = [
   { key: "sat", short: "Sa", long: "Samstag" },
   { key: "sun", short: "So", long: "Sonntag" },
 ];
+
+// Feiertag: eigener Tag, gilt Mo–Fr, wenn der Arbeitstag-Sensor "off" meldet
+const HOL = { key: "hol", short: "Ft", long: "Feiertag" };
+const WORKDAYS = ["mon", "tue", "wed", "thu", "fri"];
 
 const DEFAULT_MODES = [
   { key: "comfort", label: "Komfort", color: "#F39C12" },
@@ -113,6 +117,7 @@ class HeizplanCard extends HTMLElement {
           schema: [
             { name: "season_entity", selector: { entity: { domain: ["input_boolean", "binary_sensor", "switch"] } } },
             { name: "mode_entity", selector: { entity: { domain: ["input_select", "select"] } } },
+            { name: "workday_entity", selector: { entity: { domain: ["binary_sensor", "input_boolean"] } } },
             {
               type: "grid",
               name: "",
@@ -138,6 +143,7 @@ class HeizplanCard extends HTMLElement {
         ({
           season_entity: "Plan läuft nur, wenn dieser Schalter an ist",
           mode_entity: "Zentrale Auswahl, z. B. Aus / Heizen / Urlaub",
+          workday_entity: "z. B. Integration „Arbeitstag“ (Workday): an = Arbeitstag, aus = Feiertag. Dann gibt es eine Zeile „Feiertag“",
           mode_heat: "Optionstext für den Normal-Plan, genau wie in der Auswahl",
           mode_vacation: "Optionstext für den Urlaubsplan (leer = kein Urlaubsplan)",
           comfort_temperature_entity: "Leer = automatisch (Versatile oder Better Thermostat)",
@@ -152,6 +158,7 @@ class HeizplanCard extends HTMLElement {
           default_mode: "Grundmodus für neue Pläne",
           season_entity: "Heizperiode",
           mode_entity: "Heizmodus",
+          workday_entity: "Arbeitstag-Sensor (Feiertage, optional)",
           mode_heat: "Option „Heizen“",
           mode_vacation: "Option „Urlaub“",
           comfort_temperature_entity: "Temperatur Komfort",
@@ -231,7 +238,7 @@ class HeizplanCard extends HTMLElement {
 
   _relevantEntities() {
     const c = this._config;
-    const list = [c.entity, c.temperature_entity, c.window_entity, c.valve_entity, c.season_entity, c.mode_entity];
+    const list = [c.entity, c.temperature_entity, c.window_entity, c.valve_entity, c.season_entity, c.mode_entity, c.workday_entity];
     for (const m of this._modes) list.push(this._presetTempEntity(m));
     list.push(...this._planSwitches());
     return list.filter(Boolean);
@@ -261,6 +268,13 @@ class HeizplanCard extends HTMLElement {
   set _week(v) {
     if (!this._weeks) this._weeks = {};
     this._weeks[this._plan] = v;
+  }
+
+  _holidayNotice() {
+    const scheds = this._schedByPlan?.[this._plan] || [];
+    if (!this._config.workday_entity || !scheds.length) return "";
+    const has = scheds.some((s) => (s.tags || []).some((t) => t.endsWith("_feiertag")));
+    return has ? "" : "Feiertag ist noch nicht gespeichert: einen Tag öffnen und Speichern tippen (Feiertag = wie Sonntag).";
   }
 
   _configWarning() {
@@ -305,7 +319,10 @@ class HeizplanCard extends HTMLElement {
             start: parseTime(t.start),
             mode: this._modeByPreset(t.actions?.[0]?.service_data?.preset_mode),
           }));
-          for (const d of expandWeekdays(s.weekdays)) week[d] = normalizeDay(entries);
+          const wd = this._config.workday_entity;
+          const isHol = (s.timeslots?.[0]?.conditions || []).some((c) => c.entity_id === wd && String(c.value) === "off");
+          if (wd && isHol) week[HOL.key] = normalizeDay(entries);
+          else for (const d of expandWeekdays(s.weekdays)) week[d] = normalizeDay(entries);
         }
         weeks[pl.key] = week;
       }
@@ -333,9 +350,29 @@ class HeizplanCard extends HTMLElement {
     this._render();
   }
 
-  _dayEntries(day) {
-    const e = this._week?.[day];
-    return e && e.length ? e : [{ start: 0, mode: this._config.default_mode }];
+  _dayEntries(day, week = this._week) {
+    const e = week?.[day];
+    if (e && e.length) return e;
+    if (day === HOL.key) return this._dayEntries("sun", week); // Feiertag wie Sonntag, bis er eigens gespeichert ist
+    return [{ start: 0, mode: this._config.default_mode }];
+  }
+
+  _days() {
+    return this._config.workday_entity ? [...DAYS, HOL] : DAYS;
+  }
+
+  // Tag-Schlüssel für ein Datum; heute Mo–Fr und Arbeitstag-Sensor aus -> Feiertag
+  _keyFor(date) {
+    const k = dayKey(date);
+    const wd = this._config.workday_entity;
+    if (
+      wd &&
+      WORKDAYS.includes(k) &&
+      date.toDateString() === new Date().toDateString() &&
+      this._hass?.states?.[wd]?.state === "off"
+    )
+      return HOL.key;
+    return k;
   }
 
   async _save(newWeek) {
@@ -344,12 +381,19 @@ class HeizplanCard extends HTMLElement {
     this._render();
     try {
       // gleiche Tage gruppieren
+      // mit Arbeitstag-Sensor: Mo–Fr nur an Arbeitstagen, dazu ein Feiertags-Zeitplan für Mo–Fr
+      const wd = this._config.workday_entity;
       const groups = new Map();
       for (const d of DAYS) {
         const entries = normalizeDay(newWeek[d.key] || this._dayEntries(d.key));
-        const k = JSON.stringify(entries);
-        if (!groups.has(k)) groups.set(k, { entries, days: [] });
+        const kind = wd && WORKDAYS.includes(d.key) ? "werktag" : "";
+        const k = kind + JSON.stringify(entries);
+        if (!groups.has(k)) groups.set(k, { entries, days: [], kind });
         groups.get(k).days.push(d.key);
+      }
+      if (wd) {
+        const hol = normalizeDay(newWeek[HOL.key] || this._dayEntries(HOL.key, newWeek));
+        groups.set("feiertag", { entries: hol, days: [...WORKDAYS], kind: "feiertag" });
       }
       const roomName = this._name();
       const plan = this._planObj();
@@ -360,12 +404,14 @@ class HeizplanCard extends HTMLElement {
       let i = 0;
       for (const g of groups.values()) {
         i += 1;
+        const conds = [...plan.conditions];
+        if (g.kind) conds.push({ entity_id: wd, value: g.kind === "werktag" ? "on" : "off" });
         const timeslots = g.entries.map((e, idx) => ({
           start: fmt(e.start),
           stop: toSchedTime(idx + 1 < g.entries.length ? g.entries[idx + 1].start : DAY_MIN),
-          ...(plan.conditions.length
+          ...(conds.length
             ? {
-                conditions: plan.conditions.map((c) => ({ ...c, match_type: "is" })),
+                conditions: conds.map((c) => ({ ...c, match_type: "is" })),
                 condition_type: "and",
                 track_conditions: true,
               }
@@ -379,10 +425,12 @@ class HeizplanCard extends HTMLElement {
           ],
         }));
         await hass.callService("scheduler", "add", {
-          name: `Heizplan ${roomName} ${planName}${g.days.map((d) => DAYS.find((x) => x.key === d).short).join(" ")}`,
+          name: `Heizplan ${roomName} ${planName}${
+            g.kind === "feiertag" ? "Feiertag" : g.days.map((d) => DAYS.find((x) => x.key === d).short).join(" ")
+          }`,
           weekdays: g.days,
           repeat_type: "repeat",
-          tags: [plan.tag],
+          tags: g.kind ? [plan.tag, `${plan.tag}_${g.kind}`] : [plan.tag],
           timeslots,
         });
       }
@@ -414,8 +462,7 @@ class HeizplanCard extends HTMLElement {
 
   // Modus eines Plans zu einem Zeitpunkt
   _entryAt(planKey, date) {
-    const e = this._weeks?.[planKey]?.[dayKey(date)];
-    const entries = e && e.length ? e : [{ start: 0, mode: this._config.default_mode }];
+    const entries = this._dayEntries(this._keyFor(date), this._weeks?.[planKey] || {});
     const minute = date.getHours() * 60 + date.getMinutes();
     let cur = entries[0];
     for (const x of entries) if (x.start <= minute) cur = x;
@@ -652,7 +699,6 @@ class HeizplanCard extends HTMLElement {
     const valveSt = this._config.valve_entity && hass?.states?.[this._config.valve_entity];
     const valve = valveSt ? Math.round(parseFloat(valveSt.state)) : null;
     const now = new Date();
-    const todayIdx = (now.getDay() + 6) % 7;
     const nowMin = now.getHours() * 60 + now.getMinutes();
     const known = preset && this._modes.some((m) => m.preset === preset);
     const presetMode = known
@@ -663,10 +709,12 @@ class HeizplanCard extends HTMLElement {
           ? { key: "manual", label: "Manuell", color: "#E0569B" }
           : null;
 
-    const rows = DAYS.map((d, i) => {
+    const todayKey = this._keyFor(now);
+    const rows = this._days().map((d) => {
       const entries = this._dayEntries(d.key);
-      const marker = i === todayIdx ? `<div class="now" style="left:${(nowMin / DAY_MIN) * 100}%"></div>` : "";
-      return `<div class="row ${i === todayIdx ? "today" : ""}" data-day="${d.key}">
+      const isToday = d.key === todayKey;
+      const marker = isToday ? `<div class="now" style="left:${(nowMin / DAY_MIN) * 100}%"></div>` : "";
+      return `<div class="row ${isToday ? "today" : ""} ${d.key === HOL.key ? "hol" : ""}" data-day="${d.key}">
         <div class="dlabel">${d.short}</div>
         <div class="bar">${this._segments(entries)}${marker}</div>
         <ha-icon class="chev" icon="mdi:chevron-right"></ha-icon>
@@ -756,6 +804,7 @@ class HeizplanCard extends HTMLElement {
         ${panel}
         ${this._error ? `<div class="err">${this._error}</div>` : ""}
         ${this._configWarning() ? `<div class="err">${this._configWarning()}</div>` : ""}
+        ${this._holidayNotice() ? `<div class="note">${this._holidayNotice()}</div>` : ""}
         ${tabs}
         <div class="week">
           <div class="scale"><span></span><div>${[0, 6, 12, 18, 24].map((h) => `<b style="left:${(h / 24) * 100}%">${h}</b>`).join("")}</div><span></span></div>
@@ -886,7 +935,7 @@ class HeizplanCard extends HTMLElement {
 
   _editorHtml() {
     const ed = this._edit;
-    const dayName = DAYS.find((d) => d.key === ed.day).long;
+    const dayName = this._days().find((d) => d.key === ed.day).long;
     const entries = ed.entries;
     const handles = entries
       .slice(1)
@@ -913,7 +962,7 @@ class HeizplanCard extends HTMLElement {
         </div>`;
       })
       .join("");
-    const days = DAYS.map(
+    const days = this._days().map(
       (d) =>
         `<label class="dchk ${ed.copyTo.has(d.key) ? "on" : ""}"><input type="checkbox" data-day="${d.key}" ${ed.copyTo.has(d.key) ? "checked" : ""}>${d.short}</label>`
     ).join("");
@@ -1020,7 +1069,7 @@ class HeizplanCard extends HTMLElement {
         const set = {
           workday: ["mon", "tue", "wed", "thu", "fri"],
           weekend: ["sat", "sun"],
-          all: DAYS.map((d) => d.key),
+          all: this._days().map((d) => d.key),
         }[b.dataset.q];
         ed.copyTo = new Set([ed.day, ...set]);
         this._render();
@@ -1157,6 +1206,8 @@ const STYLE = `
   .legend { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 10px; font-size: 12px; color: var(--fg2); }
   .lg i, .entry i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; }
   .err { background: #5a2a2a; color: #ffb3b3; border-radius: 10px; padding: 8px 10px; font-size: 13px; margin-top: 8px; }
+  .note { background: #2f3a26; color: #cfe8c0; border-radius: 10px; padding: 8px 10px; font-size: 13px; margin-top: 8px; }
+  .row.hol { margin-top: 4px; border-top: 1px solid #3c3c3c; border-radius: 0 0 10px 10px; }
   .loading { color: var(--fg2); font-size: 13px; padding: 10px 0; }
   .toast { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); background: #111; color: #fff; padding: 8px 14px; border-radius: 12px; font-size: 13px; z-index: 5; }
   .editor { width: 100%; }
