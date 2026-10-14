@@ -103,7 +103,7 @@ Knopf **Manuell** → Temperatur mit − / + wählen, Dauer antippen (1–24 h) 
 
 Das läuft im Hintergrund, auch ohne offenes Dashboard und über einen Neustart hinweg. **Beenden** oder ein Modus-Knopf beendet die Vorgabe sofort. Steht „Wochenplan pausiert“ ohne Vorgabe da, holt **Fortsetzen** den Plan zurück.
 
-Funktioniert mit Versatile und Better Thermostat. In Versatile Thermostat sollte „Dauer manueller Übersteuerung“ (`manual_override_duration_min`) auf 0 stehen, sonst setzt VT die Temperatur schon vorher zurück. Das Vorheizen-Blueprint lässt pausierte Pläne aus.
+Funktioniert mit Versatile und Better Thermostat. In Versatile Thermostat sollte „Dauer manueller Übersteuerung“ (`manual_override_duration_min`) auf 0 stehen, sonst setzt VT die Temperatur schon vorher zurück. Das Feld gibt es erst nach Version 10.5.1; ältere Versionen setzen ohnehin nichts zurück. Das Vorheizen-Blueprint lässt pausierte Pläne aus.
 
 ## Blueprints
 
