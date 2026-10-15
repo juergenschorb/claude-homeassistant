@@ -44,7 +44,7 @@ Dazu zwei Blueprints:
 ### Manuell
 
 1. `dist/heizplan-card.js` nach `/config/www/heizplan-card.js` kopieren
-2. *Einstellungen → Dashboards → ⋮ → Ressourcen → Ressource hinzufügen*: URL `/local/heizplan-card.js?v=0.5.1`, Typ **JavaScript-Modul**
+2. *Einstellungen → Dashboards → ⋮ → Ressourcen → Ressource hinzufügen*: URL `/local/heizplan-card.js?v=0.5.2`, Typ **JavaScript-Modul**
 3. Bei neuen Versionen Datei ersetzen und `?v=` hochzählen
 
 ## Karte einrichten
@@ -54,7 +54,7 @@ Dashboard bearbeiten → *Karte hinzufügen* → **Heizplan Card**. Alles lässt
 | Feld | Bedeutung |
 | --- | --- |
 | Raumthermostat | `climate`-Entität des Raums (Pflicht) |
-| Name | Anzeigename, sonst Name des Thermostats |
+| Name | Anzeigename auf der Karte, sonst Name des Thermostats. Die Zeitpläne heißen immer nach dem Thermostat |
 | Raumtemperatur | eigener Temperatursensor (optional) |
 | Fensterkontakt | zeigt „Fenster offen“ (optional) |
 | Ventilstellung | `number` oder `sensor` in % (optional) |
@@ -148,4 +148,4 @@ Raumthermostate, Heizperiode, Heizmodus und den Optionstext für „Aus“ ausw�
 
 ## Stand
 
-Version 0.5.1. Mit Testdaten im Browser geprüft, noch nicht in einer echten Home-Assistant-Instanz.
+Version 0.5.2. Mit Testdaten im Browser geprüft, noch nicht in einer echten Home-Assistant-Instanz.

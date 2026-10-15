@@ -8,7 +8,7 @@
  * und zeitlich begrenzte manuelle Temperatur (pausiert den Plan bis zum Ende).
  */
 
-const CARD_VERSION = "0.5.1";
+const CARD_VERSION = "0.5.2";
 
 const OVERRIDE_HOURS = [1, 2, 3, 4, 5, 6, 8, 12, 24];
 
@@ -401,7 +401,7 @@ class HeizplanCard extends HTMLElement {
         const hol = normalizeDay(newWeek[HOL.key] || this._dayEntries(HOL.key, newWeek));
         groups.set("feiertag", { entries: hol, days: [...WORKDAYS], kind: "feiertag" });
       }
-      const roomName = this._name();
+      const roomName = this._schedName();
       const plan = this._planObj();
       const planName = this._plans.length > 1 ? `${plan.label} ` : "";
       for (const s of this._schedByPlan[plan.key] || []) {
@@ -581,7 +581,7 @@ class HeizplanCard extends HTMLElement {
       tags: [this._overrideTag()],
     };
     const time = fmt(end.getHours() * 60 + end.getMinutes());
-    const room = this._name();
+    const room = this._schedName();
     const sw = this._planSwitches();
     if (sw.length) {
       await hass.callService("scheduler", "add", {
@@ -674,6 +674,12 @@ class HeizplanCard extends HTMLElement {
     let cur = entries[0];
     for (const e of entries) if (e.start <= minute) cur = e;
     return cur;
+  }
+
+  // Name für die Zeitpläne: Thermostat, nicht der Anzeigename der Karte (der kann überall "Heizung" heißen)
+  _schedName() {
+    const st = this._hass?.states?.[this._config.entity];
+    return st?.attributes?.friendly_name || this._config.entity.replace(/^climate\./, "");
   }
 
   _name() {
