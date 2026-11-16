@@ -9,7 +9,25 @@
  * und zeitlich begrenzte manuelle Temperatur (pausiert den Plan bis zum Ende).
  */
 
-const CARD_VERSION = "0.8.2";
+const CARD_VERSION = "0.9.0";
+
+// Kartensymbol (Flamme + Wochenbalken auf einer kleinen Karte), abschaltbar mit show_icon: false
+const bars = (y, segs) =>
+  `<rect x="112" y="${y}" width="288" height="32" rx="11" fill="#3D8BD9"/>` +
+  segs.map(([x, w]) => `<rect x="${x}" y="${y}" width="${w}" height="32" fill="#F39C12"/>`).join("");
+const ICON_SVG = `<svg class="hpicon" viewBox="0 0 512 512" aria-hidden="true">
+  <defs><linearGradient id="hpfl" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#F26B1D"/><stop offset="1" stop-color="#F9B233"/></linearGradient></defs>
+  <rect x="16" y="16" width="480" height="480" rx="108" fill="#2e2e2e"/>
+  <rect x="72" y="92" width="368" height="336" rx="40" fill="#4e4e4e" stroke="#6e6e6e" stroke-width="4"/>
+  <g transform="translate(96,106) scale(0.42)">
+    <path fill="url(#hpfl)" d="M262 62c10 46-22 70-44 98-20 26-30 48-30 72 0 40 30 68 68 68s68-28 68-68c0-22-8-40-20-56-6 14-14 22-26 26 8-50-8-98-16-140z"/>
+    <path fill="#4a4a4a" d="M258 196c4 22-18 30-18 50 0 12 8 22 18 22s18-10 18-22c0-16-10-28-18-50z"/>
+  </g>
+  <rect x="252" y="150" width="96" height="18" rx="9" fill="#e6e6e6"/>
+  <rect x="252" y="184" width="60" height="14" rx="7" fill="#9a9a9a"/>
+  <circle cx="382" cy="174" r="20" fill="none" stroke="#F39C12" stroke-width="8"/>
+  ${bars(252, [[184, 54], [310, 63]])}${bars(300, [[184, 54], [310, 63]])}${bars(348, [[202, 171]])}
+</svg>`;
 
 const OVERRIDE_HOURS = [1, 2, 3, 4, 5, 6, 8, 12, 24];
 
@@ -95,6 +113,7 @@ class HeizplanCard extends HTMLElement {
           selector: { entity: { filter: [{ domain: "climate" }, { domain: "sensor", integration: "heizplan" }] } },
         },
         { name: "name", selector: { text: {} } },
+        { name: "show_icon", selector: { boolean: {} } },
         {
           type: "grid",
           name: "",
@@ -160,6 +179,7 @@ class HeizplanCard extends HTMLElement {
         ({
           entity: "Raumthermostat oder Heizplan-Raum",
           name: "Name",
+          show_icon: "Symbol anzeigen (Standard: an)",
           temperature_entity: "Raumtemperatur (optional)",
           window_entity: "Fensterkontakt (optional)",
           valve_entity: "Ventilstellung (optional)",
@@ -1222,7 +1242,8 @@ class HeizplanCard extends HTMLElement {
       <style>${STYLE}</style>
       <ha-card>
         <div class="head">
-          <div>
+          ${this._config.show_icon === false ? "" : ICON_SVG}
+          <div class="headmain">
             <div class="title">${this._name()}</div>
             <div class="sub">
               ${presetMode ? `<span class="chip" style="--c:${presetMode.color}">${presetMode.label}</span>` : ""}
@@ -1609,6 +1630,10 @@ const STYLE = `
   ha-card { display: block; background: var(--bg); color: var(--fg); border-radius: var(--r); padding: 16px; position: relative; overflow: hidden; font-family: var(--paper-font-body1_-_font-family, system-ui, sans-serif); }
   .head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
   .title { font-size: 18px; font-weight: 600; }
+  .hpicon { width: 40px; height: 40px; flex: none; }
+  .headmain { flex: 1; min-width: 0; }
+  .otitle { display: flex; align-items: center; gap: 10px; }
+  .otitle .hpicon { width: 32px; height: 32px; }
   .sub { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; color: var(--fg2); font-size: 13px; align-items: center; }
   .sub span { display: inline-flex; align-items: center; gap: 3px; }
   .sub ha-icon { --mdc-icon-size: 16px; }
@@ -1734,15 +1759,17 @@ class HeizplanOverviewCard extends HTMLElement {
         { name: "title", selector: { text: {} } },
         { name: "rooms", selector: { entity: { multiple: true, filter: [{ domain: "sensor", integration: "heizplan" }] } } },
         { name: "group_by_floor", selector: { boolean: {} } },
+        { name: "show_icon", selector: { boolean: {} } },
       ],
-      computeLabel: (s) => ({ title: "Titel", rooms: "Räume (leer = alle)", group_by_floor: "Nach Etage gruppieren" })[s.name],
+      computeLabel: (s) =>
+        ({ title: "Titel", rooms: "Räume (leer = alle)", group_by_floor: "Nach Etage gruppieren", show_icon: "Symbol anzeigen (Standard: an)" })[s.name],
       computeHelper: (s) =>
         ({ group_by_floor: "Etage = Etage des Bereichs, dem das Thermostat in Home Assistant zugeordnet ist" })[s.name],
     };
   }
 
   setConfig(config) {
-    this._config = { title: "Heizpläne", group_by_floor: true, ...(config || {}) };
+    this._config = { title: "Heizpläne", group_by_floor: true, show_icon: true, ...(config || {}) };
     this._open = this._open || new Set();
     if (this._hass) this._load();
     this._render();
@@ -1921,7 +1948,7 @@ class HeizplanOverviewCard extends HTMLElement {
                .join("")}
              <div class="legend">${DEFAULT_MODES.map((m) => `<span class="lg"><i style="background:${m.color}"></i>${m.label}</span>`).join("")}</div>`;
     this.shadowRoot.innerHTML = `<style>${STYLE}${OV_STYLE}</style><ha-card>
-      ${this._config.title ? `<div class="title">${esc(this._config.title)}</div>` : ""}
+      ${this._config.title ? `<div class="title otitle">${this._config.show_icon === false ? "" : ICON_SVG}<span>${esc(this._config.title)}</span></div>` : ""}
       ${body}</ha-card>`;
     this.shadowRoot.querySelectorAll(".oroom").forEach((el) =>
       el.addEventListener("click", () => {
