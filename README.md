@@ -31,22 +31,24 @@ Dazu zwei Blueprints:
 
 ## Voraussetzungen
 
-- Integration [Heizplan](https://github.com/juergenschorb/heizplan) (HACS, empfohlen) **oder** die [Scheduler-Komponente](https://github.com/nielsfaber/scheduler-component) (HACS, bisheriger Weg)
+- Integration [Heizplan](https://github.com/juergenschorb/heizplan) (Marketplace, empfohlen) **oder** die [Scheduler-Komponente](https://github.com/nielsfaber/scheduler-component) (Marketplace, bisheriger Weg)
 - Ein Raumthermostat (`climate.…`) mit Presets, z. B. [Versatile Thermostat](https://github.com/jmcollin78/versatile_thermostat) (`comfort`, `eco`, `frost`) oder [Better Thermostat](https://github.com/KartoffelToby/better_thermostat) ab 1.9 (`comfort`, `eco`, `away`)
 
 ## Installation
 
-### Über HACS
+### Über den Marketplace (früher HACS)
 
-1. HACS → ⋮ → **Benutzerdefinierte Repositories**
-2. URL `https://github.com/juergenschorb/claude-homeassistant`, Typ **Dashboard** → Hinzufügen
-3. „Heizplan Card“ suchen → Herunterladen
+Seit Home Assistant 2026.11 ist HACS als „Marketplace“ eingebaut. Ein vorhandenes HACS wird beim Update automatisch übernommen.
+
+1. *Einstellungen → Marketplace* → **Add from link** (eigenes Repository per Link hinzufügen)
+2. URL `https://github.com/juergenschorb/claude-homeassistant` eintragen
+3. „Heizplan Card“ installieren; Updates erscheinen danach unter *Einstellungen → Updates*
 4. Browser neu laden (Companion App: App schließen und neu öffnen)
 
 ### Manuell
 
 1. `dist/heizplan-card.js` nach `/config/www/heizplan-card.js` kopieren
-2. *Einstellungen → Dashboards → ⋮ → Ressourcen → Ressource hinzufügen*: URL `/local/heizplan-card.js?v=0.8.2`, Typ **JavaScript-Modul**
+2. *Einstellungen → Dashboards → ⋮ → Ressourcen → Ressource hinzufügen*: URL `/local/heizplan-card.js?v=0.11.1`, Typ **JavaScript-Modul**
 3. Bei neuen Versionen Datei ersetzen und `?v=` hochzählen
 
 ## Karte einrichten
