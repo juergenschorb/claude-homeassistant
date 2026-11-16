@@ -9,7 +9,7 @@
  * und zeitlich begrenzte manuelle Temperatur (pausiert den Plan bis zum Ende).
  */
 
-const CARD_VERSION = "0.10.2";
+const CARD_VERSION = "0.11.0";
 
 // Kartensymbol (Flamme + Wochenbalken auf einer kleinen Karte), abschaltbar mit show_icon: false
 const bars = (y, segs) =>
@@ -71,6 +71,21 @@ const stepTemp = (cur, dir) => {
   const n = Math.round(Number(cur) * 100) / 100 / TEMP_STEP;
   return (dir > 0 ? Math.floor(n + 1) : Math.ceil(n - 1)) * TEMP_STEP;
 };
+// Zuletzt geladene Räume, damit der Karteneditor sie mit Etage und nach Etage sortiert anbieten kann
+const ROOM_CACHE = { rooms: [], hass: null };
+const floorOf = (hass, climate) => {
+  const ent = hass?.entities?.[climate];
+  const areaId = ent?.area_id || hass?.devices?.[ent?.device_id]?.area_id;
+  const floorId = hass?.areas?.[areaId]?.floor_id;
+  const floor = floorId && hass?.floors?.[floorId];
+  return floor ? { id: floorId, name: floor.name, level: floor.level ?? 0 } : null;
+};
+const roomOptions = () =>
+  ROOM_CACHE.rooms
+    .filter((r) => r.sensor)
+    .map((r) => ({ r, f: floorOf(ROOM_CACHE.hass, r.climate) || { name: "Ohne Etage", level: -1000 } }))
+    .sort((a, b) => b.f.level - a.f.level || a.f.name.localeCompare(b.f.name, "de") || a.r.name.localeCompare(b.r.name, "de"))
+    .map(({ r, f }) => ({ value: r.sensor, label: `${f.name} · ${r.name}` }));
 const snap = (m) => Math.round(m / STEP) * STEP;
 
 function normalizeDay(entries) {
@@ -285,6 +300,8 @@ class HeizplanCard extends HTMLElement {
       return null;
     }
     this._backend = true;
+    ROOM_CACHE.rooms = rooms || [];
+    ROOM_CACHE.hass = this._hass;
     const ent = this._userConfig.entity;
     return (rooms || []).find((r) => r.sensor === ent || r.climate === ent) || null;
   }
@@ -1758,10 +1775,13 @@ class HeizplanOverviewCard extends HTMLElement {
   }
 
   static getConfigForm() {
+    const options = roomOptions();
     return {
       schema: [
         { name: "title", selector: { text: {} } },
-        { name: "rooms", selector: { entity: { multiple: true, filter: [{ domain: "sensor", integration: "heizplan" }] } } },
+        options.length
+          ? { name: "rooms", selector: { select: { multiple: true, mode: "list", options } } }
+          : { name: "rooms", selector: { entity: { multiple: true, filter: [{ domain: "sensor", integration: "heizplan" }] } } },
         { name: "group_by_floor", selector: { boolean: {} } },
         { name: "floors", selector: { floor: { multiple: true } } },
         { name: "floor_filter", selector: { boolean: {} } },
@@ -1828,6 +1848,8 @@ class HeizplanOverviewCard extends HTMLElement {
     this._loading = true;
     try {
       const rooms = (await this._hass.callWS({ type: "heizplan/rooms" })) || [];
+      ROOM_CACHE.rooms = rooms;
+      ROOM_CACHE.hass = this._hass;
       const only = this._config.rooms;
       this._rooms = rooms
         .filter((r) => !only?.length || only.includes(r.sensor))
@@ -1852,12 +1874,7 @@ class HeizplanOverviewCard extends HTMLElement {
 
   // Etage des Thermostats: Entität oder Gerät -> Bereich -> Etage
   _floor(room) {
-    const h = this._hass;
-    const ent = h?.entities?.[room.climate];
-    const areaId = ent?.area_id || h?.devices?.[ent?.device_id]?.area_id;
-    const floorId = h?.areas?.[areaId]?.floor_id;
-    const floor = floorId && h?.floors?.[floorId];
-    return floor ? { id: floorId, name: floor.name, level: floor.level ?? 0 } : null;
+    return floorOf(this._hass, room.climate);
   }
 
   // Für die aufgeklappte Ansicht: woher die Etage kommt
