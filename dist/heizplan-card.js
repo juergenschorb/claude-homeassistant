@@ -1,15 +1,15 @@
 /*
  * Heizplan Card
  * Wochenplan pro Raum mit Komfort/Eco/Frostschutz, Tageseditor und Plänen für Normal/Urlaub.
- * Mit der Integration „Heizplan“ (HACS, juergenschorb/heizplan) liegen die Pläne dort, ein Plan je Raum.
- * Ohne sie speichert die Karte in der Scheduler-Komponente (HACS, nielsfaber/scheduler-component):
+ * Mit der Integration „Heizplan“ (Marketplace, juergenschorb/heizplan) liegen die Pläne dort, ein Plan je Raum.
+ * Ohne sie speichert die Karte in der Scheduler-Komponente (Marketplace, nielsfaber/scheduler-component):
  * je Gruppe gleicher Tage ein Zeitplan, der zu jedem Wechselpunkt
  * climate.set_preset_mode am Raumthermostat aufruft.
  * Dazu: Preset-Temperaturen je Raum (number-Entitäten von Versatile oder Better Thermostat)
  * und zeitlich begrenzte manuelle Temperatur (pausiert den Plan bis zum Ende).
  */
 
-const CARD_VERSION = "0.11.0";
+const CARD_VERSION = "0.11.1";
 
 // Kartensymbol (Flamme + Wochenbalken auf einer kleinen Karte), abschaltbar mit show_icon: false
 const bars = (y, segs) =>
@@ -446,7 +446,7 @@ class HeizplanCard extends HTMLElement {
     if (!this._userConfig.entity.startsWith("climate.")) {
       this._error = this._backend
         ? "Diesen Raum gibt es in der Heizplan-Integration nicht (mehr)."
-        : "Heizplan-Integration nicht gefunden. Bitte über HACS installieren oder ein Thermostat wählen.";
+        : "Heizplan-Integration nicht gefunden. Bitte über den Marketplace installieren oder ein Thermostat wählen.";
       this._weeks = {};
       this._render();
       return;
@@ -478,7 +478,7 @@ class HeizplanCard extends HTMLElement {
           .catch(() => null);
       }
     } catch (e) {
-      this._error = "Scheduler-Komponente nicht gefunden. Bitte über HACS installieren.";
+      this._error = "Scheduler-Komponente nicht gefunden. Bitte über den Marketplace installieren.";
       this._weeks = {};
     }
     this._render();
@@ -1857,7 +1857,7 @@ class HeizplanOverviewCard extends HTMLElement {
       this._error = null;
     } catch (e) {
       this._rooms = [];
-      this._error = "Heizplan-Integration nicht gefunden. Bitte über HACS installieren.";
+      this._error = "Heizplan-Integration nicht gefunden. Bitte über den Marketplace installieren.";
     }
     this._loading = false;
     this._render();
