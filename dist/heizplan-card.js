@@ -9,7 +9,7 @@
  * und zeitlich begrenzte manuelle Temperatur (pausiert den Plan bis zum Ende).
  */
 
-const CARD_VERSION = "0.9.1";
+const CARD_VERSION = "0.10.0";
 
 // Kartensymbol (Flamme + Wochenbalken auf einer kleinen Karte), abschaltbar mit show_icon: false
 const bars = (y, segs) =>
@@ -1763,18 +1763,33 @@ class HeizplanOverviewCard extends HTMLElement {
         { name: "title", selector: { text: {} } },
         { name: "rooms", selector: { entity: { multiple: true, filter: [{ domain: "sensor", integration: "heizplan" }] } } },
         { name: "group_by_floor", selector: { boolean: {} } },
+        { name: "floors", selector: { floor: { multiple: true } } },
+        { name: "floor_filter", selector: { boolean: {} } },
         { name: "show_icon", selector: { boolean: {} } },
       ],
       computeLabel: (s) =>
-        ({ title: "Titel", rooms: "Räume (leer = alle)", group_by_floor: "Nach Etage gruppieren", show_icon: "Symbol anzeigen (Standard: an)" })[s.name],
+        ({
+          title: "Titel",
+          rooms: "Räume (leer = alle)",
+          group_by_floor: "Nach Etage gruppieren",
+          floors: "Etagen beim Öffnen (leer = alle)",
+          floor_filter: "Etagen-Auswahl in der Karte anzeigen (Standard: an)",
+          show_icon: "Symbol anzeigen (Standard: an)",
+        })[s.name],
       computeHelper: (s) =>
-        ({ group_by_floor: "Etage = Etage des Bereichs, dem das Thermostat in Home Assistant zugeordnet ist" })[s.name],
+        ({
+          group_by_floor: "Etage = Etage des Bereichs, dem das Thermostat in Home Assistant zugeordnet ist",
+          floors: "Vorauswahl. In der Karte lässt sich die Auswahl jederzeit antippen und ändern.",
+        })[s.name],
     };
   }
 
   setConfig(config) {
-    this._config = { title: "Heizpläne", group_by_floor: true, show_icon: true, ...(config || {}) };
+    this._config = { title: "Heizpläne", group_by_floor: true, show_icon: true, floor_filter: true, ...(config || {}) };
     this._open = this._open || new Set();
+    // Etagen-Auswahl: leer = alle
+    const pre = this._config.floors;
+    this._sel = new Set(Array.isArray(pre) ? pre : pre ? [pre] : []);
     if (this._hass) this._load();
     this._render();
   }
@@ -1845,16 +1860,33 @@ class HeizplanOverviewCard extends HTMLElement {
   }
 
   _groups(rooms) {
-    if (!this._config.group_by_floor) return [{ name: "", rooms }];
+    if (!this._config.group_by_floor && !this._sel.size) return [{ name: "", rooms }];
+    const all = this._floorGroups(rooms);
+    const known = new Set(all.map((g) => g.id));
+    const sel = [...this._sel].filter((id) => known.has(id));
+    const groups = sel.length ? all.filter((g) => sel.includes(g.id)) : all;
+    if (!this._config.group_by_floor) return [{ name: "", rooms: rooms.filter((r) => groups.some((g) => g.rooms.includes(r))) }];
+    // keine Etagen gepflegt: ohne Überschriften
+    return all.length === 1 && all[0].id === "" ? [{ name: "", rooms }] : groups;
+  }
+
+  _filterHtml(rooms) {
+    if (this._config.floor_filter === false) return "";
+    const all = this._floorGroups(rooms);
+    if (all.length < 2) return "";
+    const sel = [...this._sel].filter((id) => all.some((g) => g.id === id));
+    const chip = (id, name, on) => `<button class="ofc${on ? " on" : ""}" data-floor="${esc(id)}">${esc(name)}</button>`;
+    return `<div class="ofilter">${chip("*", "Alle", !sel.length)}${all.map((g) => chip(g.id, g.name, sel.includes(g.id))).join("")}</div>`;
+  }
+
+  _floorGroups(rooms) {
     const map = new Map();
     for (const r of rooms) {
       const f = this._floor(r) || { id: "", name: "Ohne Etage", level: -1000 };
       if (!map.has(f.id)) map.set(f.id, { ...f, rooms: [] });
       map.get(f.id).rooms.push(r);
     }
-    const groups = [...map.values()].sort((a, b) => b.level - a.level || a.name.localeCompare(b.name, "de"));
-    // keine Etagen gepflegt: ohne Überschriften
-    return groups.length === 1 && groups[0].id === "" ? [{ name: "", rooms }] : groups;
+    return [...map.values()].sort((a, b) => b.level - a.level || a.name.localeCompare(b.name, "de"));
   }
 
   _isHoliday(room) {
@@ -1946,7 +1978,7 @@ class HeizplanOverviewCard extends HTMLElement {
         ? `<div class="loading">Lade Heizpläne …</div>`
         : !rooms.length
           ? `<div class="loading">Noch keine Räume in der Heizplan-Integration.</div>`
-          : `<div class="oscale"><div>${[0, 6, 12, 18, 24].map((h) => `<b style="left:${(h / 24) * 100}%">${h}</b>`).join("")}</div></div>
+          : `${this._filterHtml(rooms)}<div class="oscale"><div>${[0, 6, 12, 18, 24].map((h) => `<b style="left:${(h / 24) * 100}%">${h}</b>`).join("")}</div></div>
              ${this._groups(rooms)
                .map((g) => `${g.name ? `<div class="ofloor">${esc(g.name)}</div>` : ""}${g.rooms.map((r) => this._roomHtml(r, now)).join("")}`)
                .join("")}
@@ -1954,6 +1986,18 @@ class HeizplanOverviewCard extends HTMLElement {
     this.shadowRoot.innerHTML = `<style>${STYLE}${OV_STYLE}</style><ha-card>
       ${this._config.title ? `<div class="title otitle">${this._config.show_icon === false ? "" : ICON_SVG}<span>${esc(this._config.title)}</span></div>` : ""}
       ${body}</ha-card>`;
+    this.shadowRoot.querySelectorAll(".ofc").forEach((el) =>
+      el.addEventListener("click", () => {
+        const id = el.dataset.floor;
+        if (id === "*") this._sel.clear();
+        else if (this._sel.has(id)) this._sel.delete(id);
+        else this._sel.add(id);
+        // alle Etagen angetippt = wieder „Alle“
+        const ids = this._floorGroups(this._rooms || []).map((g) => g.id);
+        if (ids.length && ids.every((i) => this._sel.has(i))) this._sel.clear();
+        this._render();
+      })
+    );
     this.shadowRoot.querySelectorAll(".oroom").forEach((el) =>
       el.addEventListener("click", () => {
         const id = el.dataset.id;
@@ -1966,6 +2010,9 @@ class HeizplanOverviewCard extends HTMLElement {
 }
 
 const OV_STYLE = `
+  .ofilter { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .ofc { border: 1px solid #555; background: transparent; color: var(--fg2); border-radius: 999px; padding: 4px 12px; font: inherit; font-size: 13px; cursor: pointer; }
+  .ofc.on { background: var(--acc); border-color: var(--acc); color: #111; font-weight: 600; }
   .oscale { margin-top: 10px; }
   .oscale > div { position: relative; height: 16px; font-size: 11px; color: var(--fg2); }
   .oscale b { position: absolute; transform: translateX(-50%); font-weight: 400; }
