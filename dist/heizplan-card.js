@@ -9,7 +9,7 @@
  * und zeitlich begrenzte manuelle Temperatur (pausiert den Plan bis zum Ende).
  */
 
-const CARD_VERSION = "0.7.2";
+const CARD_VERSION = "0.7.3";
 
 const OVERRIDE_HOURS = [1, 2, 3, 4, 5, 6, 8, 12, 24];
 
@@ -119,7 +119,7 @@ class HeizplanCard extends HTMLElement {
         {
           type: "expandable",
           name: "",
-          title: "Heizperiode und Heizmodus (optional)",
+          title: "Nur ohne Heizplan-Integration: Heizperiode, Heizmodus, Feiertage",
           schema: [
             { name: "season_entity", selector: { entity: { domain: ["input_boolean", "binary_sensor", "switch"] } } },
             { name: "mode_entity", selector: { entity: { domain: ["input_select", "select"] } } },
@@ -147,7 +147,7 @@ class HeizplanCard extends HTMLElement {
       ],
       computeHelper: (s) =>
         ({
-          season_entity: "Plan läuft nur, wenn dieser Schalter an ist. Mit der Heizplan-Integration wird das dort beim Raum eingestellt",
+          season_entity: "Nur für Räume, die noch über den Scheduler laufen. Für Räume der Heizplan-Integration leer lassen: dort gelten die Einstellungen des Raums (Geräte & Dienste → Heizplan → Konfigurieren)",
           mode_entity: "Zentrale Auswahl, z. B. Aus / Heizen / Urlaub",
           workday_entity: "Feiertagskalender (z. B. Integration „Feiertage“) oder Arbeitstag-Sensor (Workday). Dann gibt es eine Zeile „Feiertag“",
           mode_heat: "Optionstext für den Normal-Plan, genau wie in der Auswahl",
