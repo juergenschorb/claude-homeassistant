@@ -9,7 +9,7 @@
  * und zeitlich begrenzte manuelle Temperatur (pausiert den Plan bis zum Ende).
  */
 
-const CARD_VERSION = "0.7.0";
+const CARD_VERSION = "0.7.1";
 
 const OVERRIDE_HOURS = [1, 2, 3, 4, 5, 6, 8, 12, 24];
 
@@ -298,7 +298,7 @@ class HeizplanCard extends HTMLElement {
     }
     // nur neu zeichnen, wenn sich eine Entität dieser Karte geändert hat;
     // sonst ersetzt jede Zustandsänderung in HA die Knöpfe und Klicks gehen verloren
-    if (!this._edit && (first || this._relevantEntities().some((e) => old.states[e] !== hass.states[e]))) this._render();
+    if (!this._edit && !this._typing() && (first || this._relevantEntities().some((e) => old.states[e] !== hass.states[e]))) this._render();
   }
 
   _relevantEntities() {
@@ -314,8 +314,13 @@ class HeizplanCard extends HTMLElement {
     return 6;
   }
 
+  // beim Tippen des Raumnamens nicht neu zeichnen, sonst verliert das Feld den Fokus
+  _typing() {
+    return !!this.shadowRoot?.activeElement?.classList?.contains("impname");
+  }
+
   connectedCallback() {
-    this._tick = setInterval(() => !this._edit && this._render(), 60000);
+    this._tick = setInterval(() => !this._edit && !this._typing() && this._render(), 60000);
   }
 
   disconnectedCallback() {
@@ -496,7 +501,7 @@ class HeizplanCard extends HTMLElement {
   _importHtml() {
     if (!this._backend || this._room || !this._weeks || this._error || this._userConfig.plans?.length) return "";
     return `<div class="note">Die Heizplan-Integration ist installiert. Dieser Raum läuft noch über den Scheduler.
-      <div class="mig"><button class="impbtn" ${this._migrating ? "disabled" : ""}>Raum in Heizplan übernehmen</button></div>
+      <div class="mig"><input class="impname" type="text" value="${esc(this._impName ?? this._userConfig.name ?? this._schedName())}" placeholder="Raumname" /><button class="impbtn" ${this._migrating ? "disabled" : ""}>Raum in Heizplan übernehmen</button></div>
       <div class="phint">Legt den Raum mit diesem Wochenplan in der Integration an und entfernt die Zeitpläne aus dem Scheduler.</div></div>`;
   }
 
@@ -516,7 +521,8 @@ class HeizplanCard extends HTMLElement {
       for (const k of ["season_entity", "mode_entity", "mode_heat", "mode_vacation", "workday_entity", "default_mode"])
         if (c[k]) options[k] = c[k];
       const tags = [...this._plans.map((pl) => pl.tag), this._overrideTag()];
-      const room = await hass.callWS({ type: "heizplan/import", name: this._schedName(), climate: c.entity, options, plans });
+      const name = (this._impName ?? c.name ?? "").trim() || this._schedName();
+      const room = await hass.callWS({ type: "heizplan/import", name, climate: c.entity, options, plans });
       // ab jetzt schaltet die Integration: Zeitpläne im Scheduler entfernen
       const all = (await hass.callWS({ type: "scheduler" }).catch(() => [])) || [];
       for (const s of all.filter((x) => (x.tags || []).some((t) => tags.includes(t)))) {
@@ -1012,7 +1018,7 @@ class HeizplanCard extends HTMLElement {
 
   _name() {
     const st = this._hass?.states?.[this._config.entity];
-    return this._config.name || st?.attributes?.friendly_name || this._config.entity;
+    return this._config.name || this._room?.name || st?.attributes?.friendly_name || this._config.entity;
   }
 
   // ---------- Darstellung ----------
@@ -1177,6 +1183,9 @@ class HeizplanCard extends HTMLElement {
             })
       )
     );
+    const impName = this.shadowRoot.querySelector(".impname");
+    impName?.addEventListener("input", () => (this._impName = impName.value));
+    impName?.addEventListener("click", (ev) => ev.stopPropagation());
     this.shadowRoot.querySelector(".impbtn")?.addEventListener("click", () => !this._migrating && this._importToBackend());
     this.shadowRoot.querySelector(".migbtn")?.addEventListener("click", (ev) => {
       const from = ev.currentTarget.dataset.from || this.shadowRoot.querySelector(".migsel")?.value;
@@ -1556,7 +1565,7 @@ const STYLE = `
   .err { background: #5a2a2a; color: #ffb3b3; border-radius: 10px; padding: 8px 10px; font-size: 13px; margin-top: 8px; }
   .note { background: #2f3a26; color: #cfe8c0; border-radius: 10px; padding: 8px 10px; font-size: 13px; margin-top: 8px; }
   .mig { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
-  .mig select { flex: 1; min-width: 0; background: var(--card-background-color, #222); color: inherit; border: 1px solid #555; border-radius: 8px; padding: 6px; font: inherit; }
+  .mig select, .mig input { flex: 1; min-width: 0; background: var(--card-background-color, #222); color: inherit; border: 1px solid #555; border-radius: 8px; padding: 6px; font: inherit; }
   .migbtn, .impbtn { background: var(--primary-color, #03a9f4); color: #fff; border: 0; border-radius: 8px; padding: 6px 12px; font: inherit; cursor: pointer; }
   .migbtn[disabled], .impbtn[disabled] { opacity: .5; cursor: default; }
   .row.hol { margin-top: 4px; border-top: 1px solid #3c3c3c; border-radius: 0 0 10px 10px; }
@@ -1615,13 +1624,16 @@ class HeizplanOverviewCard extends HTMLElement {
       schema: [
         { name: "title", selector: { text: {} } },
         { name: "rooms", selector: { entity: { multiple: true, filter: [{ domain: "sensor", integration: "heizplan" }] } } },
+        { name: "group_by_floor", selector: { boolean: {} } },
       ],
-      computeLabel: (s) => ({ title: "Titel", rooms: "Räume (leer = alle)" })[s.name],
+      computeLabel: (s) => ({ title: "Titel", rooms: "Räume (leer = alle)", group_by_floor: "Nach Etage gruppieren" })[s.name],
+      computeHelper: (s) =>
+        ({ group_by_floor: "Etage = Etage des Bereichs, dem das Thermostat in Home Assistant zugeordnet ist" })[s.name],
     };
   }
 
   setConfig(config) {
-    this._config = { title: "Heizpläne", ...(config || {}) };
+    this._config = { title: "Heizpläne", group_by_floor: true, ...(config || {}) };
     this._open = this._open || new Set();
     if (this._hass) this._load();
     this._render();
@@ -1680,6 +1692,29 @@ class HeizplanOverviewCard extends HTMLElement {
   _mode(key) {
     const m = DEFAULT_MODES.find((x) => x.key === key);
     return m || OV_STATES[key] || { label: key, color: "#555" };
+  }
+
+  // Etage des Thermostats: Entität oder Gerät -> Bereich -> Etage
+  _floor(room) {
+    const h = this._hass;
+    const ent = h?.entities?.[room.climate];
+    const areaId = ent?.area_id || h?.devices?.[ent?.device_id]?.area_id;
+    const floorId = h?.areas?.[areaId]?.floor_id;
+    const floor = floorId && h?.floors?.[floorId];
+    return floor ? { id: floorId, name: floor.name, level: floor.level ?? 0 } : null;
+  }
+
+  _groups(rooms) {
+    if (!this._config.group_by_floor) return [{ name: "", rooms }];
+    const map = new Map();
+    for (const r of rooms) {
+      const f = this._floor(r) || { id: "", name: "Ohne Etage", level: -1000 };
+      if (!map.has(f.id)) map.set(f.id, { ...f, rooms: [] });
+      map.get(f.id).rooms.push(r);
+    }
+    const groups = [...map.values()].sort((a, b) => b.level - a.level || a.name.localeCompare(b.name, "de"));
+    // keine Etagen gepflegt: ohne Überschriften
+    return groups.length === 1 && groups[0].id === "" ? [{ name: "", rooms }] : groups;
   }
 
   _isHoliday(room) {
@@ -1768,7 +1803,9 @@ class HeizplanOverviewCard extends HTMLElement {
         : !rooms.length
           ? `<div class="loading">Noch keine Räume in der Heizplan-Integration.</div>`
           : `<div class="oscale"><div>${[0, 6, 12, 18, 24].map((h) => `<b style="left:${(h / 24) * 100}%">${h}</b>`).join("")}</div></div>
-             ${rooms.map((r) => this._roomHtml(r, now)).join("")}
+             ${this._groups(rooms)
+               .map((g) => `${g.name ? `<div class="ofloor">${esc(g.name)}</div>` : ""}${g.rooms.map((r) => this._roomHtml(r, now)).join("")}`)
+               .join("")}
              <div class="legend">${DEFAULT_MODES.map((m) => `<span class="lg"><i style="background:${m.color}"></i>${m.label}</span>`).join("")}</div>`;
     this.shadowRoot.innerHTML = `<style>${STYLE}${OV_STYLE}</style><ha-card>
       ${this._config.title ? `<div class="title">${esc(this._config.title)}</div>` : ""}
@@ -1790,6 +1827,7 @@ const OV_STYLE = `
   .oscale b { position: absolute; transform: translateX(-50%); font-weight: 400; }
   .oscale b:first-child { transform: none; }
   .oscale b:last-child { transform: translateX(-100%); }
+  .ofloor { margin-top: 14px; padding-bottom: 4px; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--acc); }
   .oroom { padding: 8px 0 10px; border-top: 1px solid #3c3c3c; cursor: pointer; }
   .ohead { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 13px; }
   .oname { font-weight: 600; font-size: 15px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
