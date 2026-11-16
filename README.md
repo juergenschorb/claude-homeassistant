@@ -29,7 +29,7 @@ Dazu zwei Blueprints:
 
 ## Voraussetzungen
 
-- [Scheduler-Komponente](https://github.com/nielsfaber/scheduler-component) (HACS, Integration)
+- Integration [Heizplan](https://github.com/juergenschorb/heizplan) (HACS, empfohlen) **oder** die [Scheduler-Komponente](https://github.com/nielsfaber/scheduler-component) (HACS, bisheriger Weg)
 - Ein Raumthermostat (`climate.…`) mit Presets, z. B. [Versatile Thermostat](https://github.com/jmcollin78/versatile_thermostat) (`comfort`, `eco`, `frost`) oder [Better Thermostat](https://github.com/KartoffelToby/better_thermostat) ab 1.9 (`comfort`, `eco`, `away`)
 
 ## Installation
@@ -44,7 +44,7 @@ Dazu zwei Blueprints:
 ### Manuell
 
 1. `dist/heizplan-card.js` nach `/config/www/heizplan-card.js` kopieren
-2. *Einstellungen → Dashboards → ⋮ → Ressourcen → Ressource hinzufügen*: URL `/local/heizplan-card.js?v=0.5.4`, Typ **JavaScript-Modul**
+2. *Einstellungen → Dashboards → ⋮ → Ressourcen → Ressource hinzufügen*: URL `/local/heizplan-card.js?v=0.6.0`, Typ **JavaScript-Modul**
 3. Bei neuen Versionen Datei ersetzen und `?v=` hochzählen
 
 ## Karte einrichten
@@ -138,7 +138,16 @@ Funktioniert mit Versatile und Better Thermostat. In Versatile Thermostat sollte
 
 Raumthermostate, Heizperiode, Heizmodus und den Optionstext für „Aus“ auswählen. Bei „Aus“ oder Heizperiode aus werden die Thermostate ausgeschaltet, sonst auf Heizen gestellt.
 
-## Wie gespeichert wird
+## Mit der Heizplan-Integration (ab 0.6.0)
+
+Ist die Integration [Heizplan](https://github.com/juergenschorb/heizplan) installiert, speichert die Karte dort: ein Plan je Raum, auf dem Home-Assistant-Server.
+
+- Räume, die noch über den Scheduler laufen, zeigen den Knopf **„Raum in Heizplan übernehmen“**. Er legt den Raum mit Wochenplan und Einstellungen (Heizperiode, Heizmodus, Feiertage) in der Integration an und entfernt die Zeitpläne aus dem Scheduler. Dafür als Administrator anmelden.
+- So lässt sich Raum für Raum umstellen. Nicht übernommene Räume laufen unverändert über den Scheduler weiter.
+- Für übernommene Räume gelten Thermostat, Heizperiode, Heizmodus und Feiertage aus der Integration (*Einstellungen → Geräte & Dienste → Heizplan → Konfigurieren*), nicht mehr die Felder im Karten-Editor.
+- Als Entität der Karte kann das Thermostat stehen bleiben oder der Raum gewählt werden (`sensor.heizplan_<raum>`). Mit dem Raum bleibt die Karte beim Tausch des Thermostats unverändert.
+
+## Wie gespeichert wird (ohne Integration, über den Scheduler)
 
 - Pläne liegen in der Scheduler-Komponente mit dem Tag `heizplan_<raum>` (Normal) bzw. `heizplan_<raum>_urlaub`, je Gruppe gleicher Tage ein Zeitplan.
 - Jeder Wechselpunkt ruft `climate.set_preset_mode` auf; die Bedingungen (Heizperiode, Heizmodus) hängen an jedem Zeitraum.
@@ -152,4 +161,4 @@ Raumthermostate, Heizperiode, Heizmodus und den Optionstext für „Aus“ ausw�
 
 ## Stand
 
-Version 0.5.4. Mit Testdaten im Browser geprüft, noch nicht in einer echten Home-Assistant-Instanz.
+Version 0.6.0. Mit Testdaten im Browser geprüft, noch nicht in einer echten Home-Assistant-Instanz.
