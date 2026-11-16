@@ -1,3 +1,5 @@
+<img src="icon.svg" width="96" align="right" alt="Heizplan Card">
+
 # Heizplan Card
 
 Wochenplan pro Raum für Home Assistant: Komfort, Eco und Frostschutz als farbige Zeitleiste, Tageseditor zum Ziehen, eigene Pläne für Normal und Urlaub. Die Pläne laufen über die [Scheduler-Komponente](https://github.com/nielsfaber/scheduler-component) im Hintergrund weiter, auch wenn kein Dashboard offen ist.
