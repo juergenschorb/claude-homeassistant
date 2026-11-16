@@ -9,7 +9,7 @@
  * und zeitlich begrenzte manuelle Temperatur (pausiert den Plan bis zum Ende).
  */
 
-const CARD_VERSION = "0.9.0";
+const CARD_VERSION = "0.9.1";
 
 // Kartensymbol (Flamme + Wochenbalken auf einer kleinen Karte), abschaltbar mit show_icon: false
 const bars = (y, segs) =>
@@ -65,6 +65,12 @@ const toSchedTime = (m) => (m >= DAY_MIN ? "00:00" : fmt(m));
 const isoDate = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const dayKey = (d) => DAYS[(d.getDay() + 6) % 7].key;
 const deg = (v) => Number(v).toFixed(1).replace(".", ",");
+// Temperaturen immer in 0,5-Grad-Schritten, krumme Werte rasten auf das nächste halbe Grad
+const TEMP_STEP = 0.5;
+const stepTemp = (cur, dir) => {
+  const n = Math.round(Number(cur) * 100) / 100 / TEMP_STEP;
+  return (dir > 0 ? Math.floor(n + 1) : Math.ceil(n - 1)) * TEMP_STEP;
+};
 const snap = (m) => Math.round(m / STEP) * STEP;
 
 function normalizeDay(entries) {
@@ -935,10 +941,9 @@ class HeizplanCard extends HTMLElement {
     const st = ent && this._hass.states[ent];
     const cur = this._presetTemp(m);
     if (!st || cur == null) return;
-    const step = parseFloat(st.attributes.step) || 0.5;
     const min = parseFloat(st.attributes.min) || 5;
     const max = parseFloat(st.attributes.max) || 30;
-    const v = Math.round(Math.max(min, Math.min(max, cur + dir * step)) * 100) / 100;
+    const v = Math.max(min, Math.min(max, stepTemp(cur, dir)));
     this._pendingTemp[m.key] = v;
     this._render();
     clearTimeout(this._tempTimer?.[m.key]);
@@ -1342,7 +1347,7 @@ class HeizplanCard extends HTMLElement {
   }
 
   _manualHtml(soll, a) {
-    const step = parseFloat(a.target_temp_step) || 0.5;
+    const step = TEMP_STEP;
     if (!this._man) {
       const base = soll != null ? Math.round(Number(soll) / step) * step : 21;
       this._man = { temp: base, hours: 3 };
@@ -1381,10 +1386,9 @@ class HeizplanCard extends HTMLElement {
     );
     root.querySelectorAll(".mstep").forEach((b) =>
       b.addEventListener("click", () => {
-        const step = parseFloat(a.target_temp_step) || 0.5;
         const min = parseFloat(a.min_temp) || 5;
         const max = parseFloat(a.max_temp) || 30;
-        this._man.temp = Math.max(min, Math.min(max, Math.round((this._man.temp + +b.dataset.d * step) * 100) / 100));
+        this._man.temp = Math.max(min, Math.min(max, stepTemp(this._man.temp, +b.dataset.d)));
         this._render();
       })
     );
