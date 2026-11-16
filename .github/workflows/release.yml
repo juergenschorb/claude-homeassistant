@@ -1,0 +1,29 @@
+name: Release
+
+# Legt für jede neue Kartenversion auf main ein GitHub-Release an,
+# damit HACS das Update mit Versionsnummer anzeigt.
+on:
+  push:
+    branches: [main]
+    paths: [dist/heizplan-card.js]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Release anlegen, falls die Version neu ist
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(sed -n 's/^const CARD_VERSION = "\(.*\)";$/\1/p' dist/heizplan-card.js)
+          test -n "$version"
+          if gh release view "v$version" >/dev/null 2>&1; then
+            echo "v$version gibt es schon"
+          else
+            gh release create "v$version" dist/heizplan-card.js --title "Heizplan Card $version" --generate-notes --target "$GITHUB_SHA"
+          fi
