@@ -9,7 +9,7 @@
  * und zeitlich begrenzte manuelle Temperatur (pausiert den Plan bis zum Ende).
  */
 
-const CARD_VERSION = "0.7.3";
+const CARD_VERSION = "0.8.0";
 
 const OVERRIDE_HOURS = [1, 2, 3, 4, 5, 6, 8, 12, 24];
 
@@ -215,7 +215,15 @@ class HeizplanCard extends HTMLElement {
     }));
     this._tag = config.tag || `heizplan_${config.entity.replace(/^climate\./, "")}`;
     // Pläne (z. B. Normal / Urlaub), jeweils mit eigenen Bedingungen
-    const plans = config.plans && config.plans.length ? config.plans : this._plansFromConfig(config);
+    const plans = room
+      ? (room.plan_keys || ["normal"]).map((key) => ({
+          key,
+          label: key === "urlaub" ? (room.presence_away ? "Abwesend" : "Urlaub") : "Normal",
+          conditions: [],
+        }))
+      : config.plans && config.plans.length
+        ? config.plans
+        : this._plansFromConfig(config);
     this._plans = plans.map((pl, i) => ({
       ...pl,
       label: pl.label || pl.key,
@@ -364,6 +372,8 @@ class HeizplanCard extends HTMLElement {
   }
 
   _planActive(pl) {
+    // mit Heizplan-Raum entscheidet die Integration (Heizperiode, Heizmodus, Anwesenheit)
+    if (this._room) return this._room.active_plan === pl.key;
     const s = this._hass?.states || {};
     return pl.conditions.every((c) => s[c.entity_id]?.state === c.value);
   }
@@ -526,7 +536,7 @@ class HeizplanCard extends HTMLElement {
         );
         if (!entries.length) continue;
         if ((s.tags || []).some((t) => t.endsWith("_feiertag"))) {
-          if (room.workday_entity) week[HOL.key] = entries;
+          if (room.holiday_day ?? room.workday_entity) week[HOL.key] = entries;
         } else for (const d of expandWeekdays(s.weekdays)) week[d] = entries;
       }
       if (Object.keys(week).length) plans[pl.key] = week;
@@ -712,13 +722,16 @@ class HeizplanCard extends HTMLElement {
   }
 
   _days() {
-    return this._config.workday_entity ? [...DAYS, HOL] : DAYS;
+    const hol = this._room?.holiday_day ?? !!this._config.workday_entity;
+    return hol ? [...DAYS, HOL] : DAYS;
   }
 
   // Tag-Schlüssel für ein Datum; heute Mo–Fr und Arbeitstag-Sensor aus -> Feiertag
   _keyFor(date) {
     const k = dayKey(date);
     const wd = this._config.workday_entity;
+    if (this._room && this._room.holiday !== undefined)
+      return this._room.holiday && WORKDAYS.includes(k) && date.toDateString() === new Date().toDateString() ? HOL.key : k;
     if (
       wd &&
       WORKDAYS.includes(k) &&
@@ -1153,7 +1166,7 @@ class HeizplanCard extends HTMLElement {
             .join("")}</div>`
         : "";
     const planInfo =
-      this._plans.length > 1 || this._plans[0].conditions.length
+      this._room || this._plans.length > 1 || this._plans[0].conditions.length
         ? activePlan
           ? `<span class="pinfo">Plan aktiv: ${activePlan.label}</span>`
           : `<span class="pinfo off">Kein Plan aktiv (Heizung aus / außerhalb Heizperiode)</span>`
@@ -1795,6 +1808,7 @@ class HeizplanOverviewCard extends HTMLElement {
   }
 
   _isHoliday(room) {
+    if (room.holiday !== undefined) return room.holiday;
     const wd = room.workday_entity;
     if (!wd) return false;
     return this._hass?.states?.[wd]?.state === (wd.startsWith("calendar.") ? "on" : "off");
@@ -1835,7 +1849,8 @@ class HeizplanOverviewCard extends HTMLElement {
     const state = hass?.states?.[room.sensor]?.state || (room.override ? "manual" : room.active_plan ? "" : "off");
     const mode = this._mode(state);
     const plan = room.active_plan || "normal";
-    const planLabel = room.plan_keys?.length > 1 && room.active_plan ? (plan === "urlaub" ? "Urlaub" : "Normal") : "";
+    const planLabel =
+      room.plan_keys?.length > 1 && room.active_plan ? (plan === "urlaub" ? (room.presence_away ? "Abwesend" : "Urlaub") : "Normal") : "";
     const hol = this._isHoliday(room);
     const todayKey = WORKDAYS.includes(dayKey(now)) && hol ? HOL.key : dayKey(now);
     const nowMin = now.getHours() * 60 + now.getMinutes();
@@ -1843,7 +1858,7 @@ class HeizplanOverviewCard extends HTMLElement {
     const cl = hass?.states?.[room.climate];
     const ist = cl?.attributes?.current_temperature;
     const open = this._open.has(room.entry_id);
-    const days = room.workday_entity ? [...DAYS, HOL] : DAYS;
+    const days = (room.holiday_day ?? room.workday_entity) ? [...DAYS, HOL] : DAYS;
     const week = open
       ? `<div class="oweek">${days
           .map(
