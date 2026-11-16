@@ -165,7 +165,7 @@ title: Heizpläne
 
 Die Räume werden nach Etage gruppiert, wenn die Thermostate in Home Assistant einem Bereich mit Etage zugeordnet sind (abschaltbar mit `group_by_floor: false`). So können Räume in verschiedenen Etagen gleich heißen, z. B. zweimal „Wohnzimmer“. Den Raumnamen vergibst du beim Übernehmen in der Karte oder später unter *Geräte & Dienste → Heizplan → ⋮ → Umbenennen*.
 
-Ab 0.10.0 hat die Übersicht oben eine Etagen-Auswahl: „Alle“ oder eine bzw. mehrere Etagen antippen (z. B. EG + DG). Mit `floors:` (Liste von Etagen, auch im Karteneditor) legst du fest, was beim Öffnen gewählt ist; `floor_filter: false` blendet die Auswahl aus.
+Ab 0.10.1 wählst du im Karteneditor unter „Angezeigte Etagen“ (`floors:`), welche Etagen die Übersicht zeigt, z. B. nur DG oder EG + DG. Leer heißt alle. Die Karte zeigt dann nur noch die Räume dieser Etagen. Wer in der Karte selbst umschalten möchte, schaltet mit `floor_filter: true` zusätzlich Schaltflächen je Etage ein.
 
 Ab 0.9.0 zeigen beide Karten oben links das Heizplan-Symbol. Mit `show_icon: false` (oder im Karteneditor „Symbol anzeigen“) blendest du es aus.
 

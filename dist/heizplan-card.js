@@ -9,7 +9,7 @@
  * und zeitlich begrenzte manuelle Temperatur (pausiert den Plan bis zum Ende).
  */
 
-const CARD_VERSION = "0.10.0";
+const CARD_VERSION = "0.10.1";
 
 // Kartensymbol (Flamme + Wochenbalken auf einer kleinen Karte), abschaltbar mit show_icon: false
 const bars = (y, segs) =>
@@ -1772,24 +1772,25 @@ class HeizplanOverviewCard extends HTMLElement {
           title: "Titel",
           rooms: "Räume (leer = alle)",
           group_by_floor: "Nach Etage gruppieren",
-          floors: "Etagen beim Öffnen (leer = alle)",
-          floor_filter: "Etagen-Auswahl in der Karte anzeigen (Standard: an)",
+          floors: "Angezeigte Etagen (leer = alle)",
+          floor_filter: "Zusätzlich Schaltflächen zum Umschalten der Etagen in der Karte",
           show_icon: "Symbol anzeigen (Standard: an)",
         })[s.name],
       computeHelper: (s) =>
         ({
           group_by_floor: "Etage = Etage des Bereichs, dem das Thermostat in Home Assistant zugeordnet ist",
-          floors: "Vorauswahl. In der Karte lässt sich die Auswahl jederzeit antippen und ändern.",
+          floors: "Die Karte zeigt nur die Räume dieser Etagen.",
         })[s.name],
     };
   }
 
   setConfig(config) {
-    this._config = { title: "Heizpläne", group_by_floor: true, show_icon: true, floor_filter: true, ...(config || {}) };
+    this._config = { title: "Heizpläne", group_by_floor: true, show_icon: true, floor_filter: false, ...(config || {}) };
     this._open = this._open || new Set();
-    // Etagen-Auswahl: leer = alle
+    // floors = fest angezeigte Etagen (leer = alle); _sel = Auswahl über die Schaltflächen (leer = alle erlaubten)
     const pre = this._config.floors;
-    this._sel = new Set(Array.isArray(pre) ? pre : pre ? [pre] : []);
+    this._fixed = new Set(Array.isArray(pre) ? pre : pre ? [pre] : []);
+    this._sel = new Set();
     if (this._hass) this._load();
     this._render();
   }
@@ -1860,18 +1861,18 @@ class HeizplanOverviewCard extends HTMLElement {
   }
 
   _groups(rooms) {
-    if (!this._config.group_by_floor && !this._sel.size) return [{ name: "", rooms }];
+    if (!this._config.group_by_floor && !this._sel.size && !this._fixed.size) return [{ name: "", rooms }];
     const all = this._floorGroups(rooms);
     const known = new Set(all.map((g) => g.id));
     const sel = [...this._sel].filter((id) => known.has(id));
     const groups = sel.length ? all.filter((g) => sel.includes(g.id)) : all;
     if (!this._config.group_by_floor) return [{ name: "", rooms: rooms.filter((r) => groups.some((g) => g.rooms.includes(r))) }];
     // keine Etagen gepflegt: ohne Überschriften
-    return all.length === 1 && all[0].id === "" ? [{ name: "", rooms }] : groups;
+    return all.length === 1 ? [{ name: "", rooms: all[0].rooms }] : groups;
   }
 
   _filterHtml(rooms) {
-    if (this._config.floor_filter === false) return "";
+    if (!this._config.floor_filter) return "";
     const all = this._floorGroups(rooms);
     if (all.length < 2) return "";
     const sel = [...this._sel].filter((id) => all.some((g) => g.id === id));
@@ -1883,6 +1884,7 @@ class HeizplanOverviewCard extends HTMLElement {
     const map = new Map();
     for (const r of rooms) {
       const f = this._floor(r) || { id: "", name: "Ohne Etage", level: -1000 };
+      if (this._fixed.size && !this._fixed.has(f.id)) continue;
       if (!map.has(f.id)) map.set(f.id, { ...f, rooms: [] });
       map.get(f.id).rooms.push(r);
     }
@@ -1981,7 +1983,7 @@ class HeizplanOverviewCard extends HTMLElement {
           : `${this._filterHtml(rooms)}<div class="oscale"><div>${[0, 6, 12, 18, 24].map((h) => `<b style="left:${(h / 24) * 100}%">${h}</b>`).join("")}</div></div>
              ${this._groups(rooms)
                .map((g) => `${g.name ? `<div class="ofloor">${esc(g.name)}</div>` : ""}${g.rooms.map((r) => this._roomHtml(r, now)).join("")}`)
-               .join("")}
+               .join("") || `<div class="loading">Keine Räume in den gewählten Etagen.</div>`}
              <div class="legend">${DEFAULT_MODES.map((m) => `<span class="lg"><i style="background:${m.color}"></i>${m.label}</span>`).join("")}</div>`;
     this.shadowRoot.innerHTML = `<style>${STYLE}${OV_STYLE}</style><ha-card>
       ${this._config.title ? `<div class="title otitle">${this._config.show_icon === false ? "" : ICON_SVG}<span>${esc(this._config.title)}</span></div>` : ""}
