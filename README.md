@@ -44,7 +44,7 @@ Dazu zwei Blueprints:
 ### Manuell
 
 1. `dist/heizplan-card.js` nach `/config/www/heizplan-card.js` kopieren
-2. *Einstellungen → Dashboards → ⋮ → Ressourcen → Ressource hinzufügen*: URL `/local/heizplan-card.js?v=0.6.0`, Typ **JavaScript-Modul**
+2. *Einstellungen → Dashboards → ⋮ → Ressourcen → Ressource hinzufügen*: URL `/local/heizplan-card.js?v=0.7.0`, Typ **JavaScript-Modul**
 3. Bei neuen Versionen Datei ersetzen und `?v=` hochzählen
 
 ## Karte einrichten
@@ -147,6 +147,27 @@ Ist die Integration [Heizplan](https://github.com/juergenschorb/heizplan) instal
 - Für übernommene Räume gelten Thermostat, Heizperiode, Heizmodus und Feiertage aus der Integration (*Einstellungen → Geräte & Dienste → Heizplan → Konfigurieren*), nicht mehr die Felder im Karten-Editor.
 - Als Entität der Karte kann das Thermostat stehen bleiben oder der Raum gewählt werden (`sensor.heizplan_<raum>`). Mit dem Raum bleibt die Karte beim Tausch des Thermostats unverändert.
 
+## Übersicht aller Räume (ab 0.7.0)
+
+Die Datei bringt eine zweite Karte mit: **Heizplan Übersicht** (`custom:heizplan-overview-card`). Sie zeigt alle Räume der Heizplan-Integration mit Modus, aktivem Plan, Raumtemperatur, nächstem Wechsel und dem heutigen Tag als Balken. Ein Tipp auf einen Raum klappt die ganze Woche auf. Bearbeitet wird in der Heizplan Card des Raums.
+
+![Übersicht](docs/vorschau-uebersicht.png)
+
+```yaml
+type: custom:heizplan-overview-card
+title: Heizpläne
+```
+
+Optional nur bestimmte Räume:
+
+```yaml
+type: custom:heizplan-overview-card
+title: Heizpläne OG
+rooms:
+  - sensor.heizplan_bad
+  - sensor.heizplan_buero
+```
+
 ## Wie gespeichert wird (ohne Integration, über den Scheduler)
 
 - Pläne liegen in der Scheduler-Komponente mit dem Tag `heizplan_<raum>` (Normal) bzw. `heizplan_<raum>_urlaub`, je Gruppe gleicher Tage ein Zeitplan.
@@ -161,4 +182,4 @@ Ist die Integration [Heizplan](https://github.com/juergenschorb/heizplan) instal
 
 ## Stand
 
-Version 0.6.0. Mit Testdaten im Browser geprüft, noch nicht in einer echten Home-Assistant-Instanz.
+Version 0.7.0. Mit Testdaten im Browser geprüft, noch nicht in einer echten Home-Assistant-Instanz.
