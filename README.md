@@ -44,7 +44,7 @@ Dazu zwei Blueprints:
 ### Manuell
 
 1. `dist/heizplan-card.js` nach `/config/www/heizplan-card.js` kopieren
-2. *Einstellungen → Dashboards → ⋮ → Ressourcen → Ressource hinzufügen*: URL `/local/heizplan-card.js?v=0.8.1`, Typ **JavaScript-Modul**
+2. *Einstellungen → Dashboards → ⋮ → Ressourcen → Ressource hinzufügen*: URL `/local/heizplan-card.js?v=0.8.2`, Typ **JavaScript-Modul**
 3. Bei neuen Versionen Datei ersetzen und `?v=` hochzählen
 
 ## Karte einrichten
@@ -146,7 +146,8 @@ Ist die Integration [Heizplan](https://github.com/juergenschorb/heizplan) instal
 - Wurde der Raum schon von Hand in der Integration angelegt und im Scheduler liegen noch Zeitpläne dafür, zeigt die Karte **„Plan aus dem Scheduler übernehmen“**. Heizperiode, Heizmodus und Feiertage trägst du in diesem Fall selbst beim Raum ein.
 - So lässt sich Raum für Raum umstellen. Nicht übernommene Räume laufen unverändert über den Scheduler weiter.
 - Für übernommene Räume gelten Thermostat, Heizperiode, Heizmodus und Feiertage aus der Integration (*Einstellungen → Geräte & Dienste → Heizplan → Konfigurieren*), nicht mehr die Felder im Karten-Editor.
-- Ab Integration 0.3.0 kann je Raum zusätzlich eine Anwesenheit (Modus der Etage) gewählt werden: „Abwesend“ schaltet auf den Urlaubs-/Abwesend-Plan, „Urlaub zuhause“ nutzt Mo–Fr den Tag „Feiertag“. Die Karte zeigt dann den zweiten Plan als „Abwesend“.
+- Ab Integration 0.3.0 kann je Raum zusätzlich eine Anwesenheit (Modus der Etage) gewählt werden: „Abwesend“ schaltet auf den Urlaubs-/Abwesend-Plan, „Urlaub zuhause“ nutzt Mo–Fr den Plan vom Sonntag. Die Karte zeigt dann den zweiten Plan als „Abwesend“.
+- Für Räume der Integration (ab 0.3.1) gibt es keine eigene Zeile „Feiertag“ mehr: an Feiertagen und bei „Urlaub zuhause“ gilt Mo–Fr der Plan vom Sonntag. Die Karte zeigt das als Hinweis an.
 - Als Entität der Karte kann das Thermostat stehen bleiben oder der Raum gewählt werden (`sensor.heizplan_<raum>`). Mit dem Raum bleibt die Karte beim Tausch des Thermostats unverändert.
 
 ## Übersicht aller Räume (ab 0.7.0)
@@ -186,4 +187,4 @@ rooms:
 
 ## Stand
 
-Version 0.8.1. Mit Testdaten im Browser geprüft, noch nicht in einer echten Home-Assistant-Instanz.
+Version 0.8.2. Mit Testdaten im Browser geprüft, noch nicht in einer echten Home-Assistant-Instanz.
