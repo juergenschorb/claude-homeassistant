@@ -9,7 +9,7 @@
  * und zeitlich begrenzte manuelle Temperatur (pausiert den Plan bis zum Ende).
  */
 
-const CARD_VERSION = "0.6.0";
+const CARD_VERSION = "0.7.0";
 
 const OVERRIDE_HOURS = [1, 2, 3, 4, 5, 6, 8, 12, 24];
 
@@ -1601,12 +1601,218 @@ const STYLE = `
   .save { background: var(--acc); color: #111; }
 `;
 
+// ---------- Übersicht aller Räume der Heizplan-Integration ----------
+const OV_STATES = { off: { label: "Kein Plan aktiv", color: "#7A8A99" }, manual: { label: "Manuell", color: "#E0569B" } };
+const esc = (v) => String(v ?? "").replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[ch]);
+
+class HeizplanOverviewCard extends HTMLElement {
+  static getStubConfig() {
+    return { title: "Heizpläne" };
+  }
+
+  static getConfigForm() {
+    return {
+      schema: [
+        { name: "title", selector: { text: {} } },
+        { name: "rooms", selector: { entity: { multiple: true, filter: [{ domain: "sensor", integration: "heizplan" }] } } },
+      ],
+      computeLabel: (s) => ({ title: "Titel", rooms: "Räume (leer = alle)" })[s.name],
+    };
+  }
+
+  setConfig(config) {
+    this._config = { title: "Heizpläne", ...(config || {}) };
+    this._open = this._open || new Set();
+    if (this._hass) this._load();
+    this._render();
+  }
+
+  set hass(hass) {
+    const old = this._hass;
+    this._hass = hass;
+    if (!old) {
+      this._load();
+      return;
+    }
+    const sensors = (this._rooms || []).map((r) => r.sensor).filter(Boolean);
+    if (sensors.some((e) => old.states[e] !== hass.states[e])) this._load();
+    else if ((this._rooms || []).some((r) => r.workday_entity && old.states[r.workday_entity] !== hass.states[r.workday_entity]))
+      this._render();
+  }
+
+  getCardSize() {
+    return 2 + (this._rooms?.length || 0);
+  }
+
+  connectedCallback() {
+    this._tick = setInterval(() => this._render(), 60000);
+  }
+
+  disconnectedCallback() {
+    clearInterval(this._tick);
+  }
+
+  async _load() {
+    if (this._loading) {
+      this._again = true;
+      return;
+    }
+    this._loading = true;
+    try {
+      const rooms = (await this._hass.callWS({ type: "heizplan/rooms" })) || [];
+      const only = this._config.rooms;
+      this._rooms = rooms
+        .filter((r) => !only?.length || only.includes(r.sensor))
+        .sort((a, b) => a.name.localeCompare(b.name, "de"));
+      this._error = null;
+    } catch (e) {
+      this._rooms = [];
+      this._error = "Heizplan-Integration nicht gefunden. Bitte über HACS installieren.";
+    }
+    this._loading = false;
+    this._render();
+    if (this._again) {
+      this._again = false;
+      this._load();
+    }
+  }
+
+  _mode(key) {
+    const m = DEFAULT_MODES.find((x) => x.key === key);
+    return m || OV_STATES[key] || { label: key, color: "#555" };
+  }
+
+  _isHoliday(room) {
+    const wd = room.workday_entity;
+    if (!wd) return false;
+    return this._hass?.states?.[wd]?.state === (wd.startsWith("calendar.") ? "on" : "off");
+  }
+
+  _entries(room, plan, day) {
+    const e = room.plans?.[plan]?.[day];
+    if (e && e.length) return e;
+    if (day === HOL.key) return this._entries(room, plan, "sun");
+    return [{ start: 0, mode: room.default_mode || "eco" }];
+  }
+
+  _bar(entries, marker) {
+    const segs = entries
+      .map((e, i) => {
+        const end = i + 1 < entries.length ? entries[i + 1].start : DAY_MIN;
+        const m = this._mode(e.mode);
+        return `<div class="seg" style="left:${(e.start / DAY_MIN) * 100}%;width:${((end - e.start) / DAY_MIN) * 100}%;background:${m.color}" title="${fmt(e.start)}–${fmt(end)} ${esc(m.label)}"></div>`;
+      })
+      .join("");
+    return `<div class="bar">${segs}${marker}</div>`;
+  }
+
+  _nextText(room, now) {
+    if (room.override?.until) {
+      const end = new Date(room.override.until);
+      if (!isNaN(end)) return `Manuell ${deg(room.override.temperature)} °C bis ${fmt(end.getHours() * 60 + end.getMinutes())}`;
+    }
+    if (!room.next_change) return "";
+    const t = new Date(room.next_change);
+    if (isNaN(t)) return "";
+    const day = t.toDateString() === now.toDateString() ? "" : `${DAYS[(t.getDay() + 6) % 7].short} `;
+    return `${day}${fmt(t.getHours() * 60 + t.getMinutes())} → ${esc(this._mode(room.next_mode).label)}`;
+  }
+
+  _roomHtml(room, now) {
+    const hass = this._hass;
+    const state = hass?.states?.[room.sensor]?.state || (room.override ? "manual" : room.active_plan ? "" : "off");
+    const mode = this._mode(state);
+    const plan = room.active_plan || "normal";
+    const planLabel = room.plan_keys?.length > 1 && room.active_plan ? (plan === "urlaub" ? "Urlaub" : "Normal") : "";
+    const hol = this._isHoliday(room);
+    const todayKey = WORKDAYS.includes(dayKey(now)) && hol ? HOL.key : dayKey(now);
+    const nowMin = now.getHours() * 60 + now.getMinutes();
+    const marker = `<div class="now" style="left:${(nowMin / DAY_MIN) * 100}%"></div>`;
+    const cl = hass?.states?.[room.climate];
+    const ist = cl?.attributes?.current_temperature;
+    const open = this._open.has(room.entry_id);
+    const days = room.workday_entity ? [...DAYS, HOL] : DAYS;
+    const week = open
+      ? `<div class="oweek">${days
+          .map(
+            (d) => `<div class="orow ${d.key === todayKey ? "today" : ""}"><div class="dlabel">${d.short}</div>${this._bar(
+              this._entries(room, plan, d.key),
+              d.key === todayKey ? marker : ""
+            )}</div>`
+          )
+          .join("")}</div>`
+      : "";
+    return `<div class="oroom ${open ? "open" : ""}" data-id="${esc(room.entry_id)}">
+        <div class="ohead">
+          <div class="oname">${esc(room.name)}</div>
+          <span class="chip" style="--c:${mode.color}">${esc(mode.label)}</span>
+          ${planLabel ? `<span class="oplan">${planLabel}</span>` : ""}
+          <span class="oist">${ist != null && !isNaN(ist) ? `${Number(ist).toFixed(1)} °C` : ""}</span>
+          <ha-icon class="chev" icon="mdi:chevron-${open ? "up" : "down"}"></ha-icon>
+        </div>
+        ${open ? "" : this._bar(this._entries(room, plan, todayKey), marker)}
+        <div class="onext">${[this._nextText(room, now), cl ? "" : `Thermostat ${esc(room.climate)} fehlt`].filter(Boolean).join(" · ")}</div>
+        ${week}
+      </div>`;
+  }
+
+  _render() {
+    if (!this._config) return;
+    if (!this.shadowRoot) this.attachShadow({ mode: "open" });
+    const now = new Date();
+    const rooms = this._rooms;
+    const body = this._error
+      ? `<div class="err">${this._error}</div>`
+      : !rooms
+        ? `<div class="loading">Lade Heizpläne …</div>`
+        : !rooms.length
+          ? `<div class="loading">Noch keine Räume in der Heizplan-Integration.</div>`
+          : `<div class="oscale"><div>${[0, 6, 12, 18, 24].map((h) => `<b style="left:${(h / 24) * 100}%">${h}</b>`).join("")}</div></div>
+             ${rooms.map((r) => this._roomHtml(r, now)).join("")}
+             <div class="legend">${DEFAULT_MODES.map((m) => `<span class="lg"><i style="background:${m.color}"></i>${m.label}</span>`).join("")}</div>`;
+    this.shadowRoot.innerHTML = `<style>${STYLE}${OV_STYLE}</style><ha-card>
+      ${this._config.title ? `<div class="title">${esc(this._config.title)}</div>` : ""}
+      ${body}</ha-card>`;
+    this.shadowRoot.querySelectorAll(".oroom").forEach((el) =>
+      el.addEventListener("click", () => {
+        const id = el.dataset.id;
+        if (this._open.has(id)) this._open.delete(id);
+        else this._open.add(id);
+        this._render();
+      })
+    );
+  }
+}
+
+const OV_STYLE = `
+  .oscale { margin-top: 10px; }
+  .oscale > div { position: relative; height: 16px; font-size: 11px; color: var(--fg2); }
+  .oscale b { position: absolute; transform: translateX(-50%); font-weight: 400; }
+  .oscale b:first-child { transform: none; }
+  .oscale b:last-child { transform: translateX(-100%); }
+  .oroom { padding: 8px 0 10px; border-top: 1px solid #3c3c3c; cursor: pointer; }
+  .ohead { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 13px; }
+  .oname { font-weight: 600; font-size: 15px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .oplan, .oist { color: var(--fg2); }
+  .onext { font-size: 12px; color: var(--fg2); margin-top: 5px; min-height: 14px; }
+  .oweek { margin-top: 6px; }
+  .orow { display: grid; grid-template-columns: 28px 1fr; align-items: center; gap: 8px; padding: 3px 0; }
+  .orow.today .dlabel { color: var(--acc); font-weight: 700; }
+`;
+
 customElements.define("heizplan-card", HeizplanCard);
+customElements.define("heizplan-overview-card", HeizplanOverviewCard);
 window.customCards = window.customCards || [];
 window.customCards.push({
   type: "heizplan-card",
   name: "Heizplan Card",
   description: "Wochenplan pro Raum mit Tageseditor, Normal-/Urlaubsplan, Preset-Temperaturen und manueller Temperatur auf Zeit",
+  preview: false,
+});
+window.customCards.push({
+  type: "heizplan-overview-card",
+  name: "Heizplan Übersicht",
+  description: "Alle Räume der Heizplan-Integration mit Modus, nächstem Wechsel und Tagesplan",
   preview: false,
 });
 console.info(`%c HEIZPLAN-CARD %c ${CARD_VERSION} `, "background:#69C350;color:#111", "background:#2b2b2b;color:#fff");
