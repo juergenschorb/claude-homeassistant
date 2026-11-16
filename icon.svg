@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3a3a3a"/>
+      <stop offset="1" stop-color="#232323"/>
+    </linearGradient>
+    <linearGradient id="cd" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#565656"/>
+      <stop offset="1" stop-color="#474747"/>
+    </linearGradient>
+    <linearGradient id="fl" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#F26B1D"/>
+      <stop offset="1" stop-color="#F9B233"/>
+    </linearGradient>
+    <clipPath id="b1"><rect x="112" y="252" width="288" height="32" rx="11"/></clipPath>
+    <clipPath id="b2"><rect x="112" y="300" width="288" height="32" rx="11"/></clipPath>
+    <clipPath id="b3"><rect x="112" y="348" width="288" height="32" rx="11"/></clipPath>
+  </defs>
+  <rect x="16" y="16" width="480" height="480" rx="108" fill="url(#bg)"/>
+  <!-- Karte -->
+  <rect x="72" y="92" width="368" height="336" rx="40" fill="#000" opacity=".28" transform="translate(0,10)"/>
+  <rect x="72" y="92" width="368" height="336" rx="40" fill="url(#cd)" stroke="#6e6e6e" stroke-width="4"/>
+  <!-- Kopfzeile: Flamme, Titel, Temperatur -->
+  <g transform="translate(96,106) scale(0.42)">
+    <path fill="url(#fl)" d="M262 62c10 46-22 70-44 98-20 26-30 48-30 72 0 40 30 68 68 68s68-28 68-68c0-22-8-40-20-56-6 14-14 22-26 26 8-50-8-98-16-140z"/>
+    <path fill="#4a4a4a" opacity=".9" d="M258 196c4 22-18 30-18 50 0 12 8 22 18 22s18-10 18-22c0-16-10-28-18-50z"/>
+  </g>
+  <rect x="252" y="150" width="96" height="18" rx="9" fill="#e6e6e6"/>
+  <rect x="252" y="184" width="60" height="14" rx="7" fill="#9a9a9a"/>
+  <circle cx="382" cy="174" r="20" fill="none" stroke="#F39C12" stroke-width="8"/>
+  <!-- Wochenplan-Balken -->
+  <g clip-path="url(#b1)"><rect x="112" y="252" width="288" height="32" fill="#3D8BD9"/><rect x="184" y="252" width="54" height="32" fill="#F39C12"/><rect x="310" y="252" width="63" height="32" fill="#F39C12"/></g>
+  <g clip-path="url(#b2)"><rect x="112" y="300" width="288" height="32" fill="#3D8BD9"/><rect x="184" y="300" width="54" height="32" fill="#F39C12"/><rect x="310" y="300" width="63" height="32" fill="#F39C12"/></g>
+  <g clip-path="url(#b3)"><rect x="112" y="348" width="288" height="32" fill="#3D8BD9"/><rect x="202" y="348" width="171" height="32" fill="#F39C12"/></g>
+</svg>
