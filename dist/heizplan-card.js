@@ -8,7 +8,7 @@
  * und zeitlich begrenzte manuelle Temperatur (pausiert den Plan bis zum Ende).
  */
 
-const CARD_VERSION = "0.5.3";
+const CARD_VERSION = "0.5.4";
 
 const OVERRIDE_HOURS = [1, 2, 3, 4, 5, 6, 8, 12, 24];
 
@@ -200,6 +200,7 @@ class HeizplanCard extends HTMLElement {
     this._man = null;
     this._edit = null;
     this._migrating = false;
+    this._fixTried = new Set();
     // Konfiguration geändert (z. B. anderes Thermostat im Editor): Zeitpläne neu laden
     if (this._hass) {
       this._adaptModes();
@@ -322,18 +323,7 @@ class HeizplanCard extends HTMLElement {
       for (const pl of this._plans) {
         const scheds = (all || []).filter((s) => (s.tags || []).includes(pl.tag));
         this._schedByPlan[pl.key] = scheds;
-        const week = {};
-        for (const s of scheds) {
-          const entries = (s.timeslots || []).map((t) => ({
-            start: parseTime(t.start),
-            mode: this._modeByPreset(t.actions?.[0]?.service_data?.preset_mode),
-          }));
-          const wd = this._config.workday_entity;
-          const isHol = (s.timeslots?.[0]?.conditions || []).some((c) => c.entity_id === wd && String(c.value) === this._holValue());
-          if (wd && isHol) week[HOL.key] = normalizeDay(entries);
-          else for (const d of expandWeekdays(s.weekdays)) week[d] = normalizeDay(entries);
-        }
-        weeks[pl.key] = week;
+        weeks[pl.key] = this._weekFrom(scheds);
       }
       this._weeks = weeks;
       this._allScheds = all || [];
@@ -358,6 +348,74 @@ class HeizplanCard extends HTMLElement {
       this._weeks = {};
     }
     this._render();
+    this._autoFix();
+  }
+
+  // Wochenplan aus Scheduler-Zeitplänen lesen
+  _weekFrom(scheds) {
+    const week = {};
+    const wd = this._config.workday_entity;
+    for (const s of scheds) {
+      const entries = (s.timeslots || []).map((t) => ({
+        start: parseTime(t.start),
+        mode: this._modeByPreset(t.actions?.[0]?.service_data?.preset_mode),
+      }));
+      const isHol = (s.timeslots?.[0]?.conditions || []).some((c) => c.entity_id === wd && String(c.value) === this._holValue());
+      if (wd && isHol) week[HOL.key] = normalizeDay(entries);
+      else for (const d of expandWeekdays(s.weekdays)) week[d] = normalizeDay(entries);
+    }
+    return week;
+  }
+
+  // ---------- Sicherung, Wiederherstellen, Umbenennen ----------
+  // Kopie des Wochenplans im Browser, damit im Scheduler gelöschte Zeitpläne wieder angelegt werden können
+  _backup(tag) {
+    try {
+      return JSON.parse(localStorage.getItem(`heizplan-card:${tag}`) || "null");
+    } catch (e) {
+      return null;
+    }
+  }
+
+  _storeBackup(tag, week) {
+    try {
+      if (week && Object.keys(week).length) localStorage.setItem(`heizplan-card:${tag}`, JSON.stringify(week));
+    } catch (e) {
+      /* kein Speicher im Browser */
+    }
+  }
+
+  _schedPrefix() {
+    return `Heizplan ${this._schedName()} `;
+  }
+
+  // gelöschte Tage aus der Sicherung neu anlegen, Zeitpläne mit altem Namen neu benennen
+  async _autoFix() {
+    if (this._fixing || this._saving || this._edit || this._migrating || !this._weeks || this._error) return;
+    const todo = [];
+    for (const pl of this._plans) {
+      const week = this._weeks[pl.key] || {};
+      const scheds = this._schedByPlan[pl.key] || [];
+      const backup = this._backup(pl.tag) || {};
+      const days = this._days().map((d) => d.key);
+      const missing = days.filter((d) => !week[d]?.length && backup[d]?.length);
+      const misnamed = scheds.some((s) => !String(s.name || "").startsWith(this._schedPrefix()));
+      if ((missing.length || misnamed) && !this._fixTried.has(pl.tag)) {
+        const merged = { ...week };
+        for (const d of missing) merged[d] = backup[d];
+        todo.push({ pl, week: merged, restored: missing.length > 0 });
+      } else if (scheds.length) {
+        this._storeBackup(pl.tag, { ...backup, ...week });
+      }
+    }
+    if (!todo.length) return;
+    this._fixing = true;
+    for (const t of todo) {
+      this._fixTried.add(t.pl.tag);
+      await this._save(t.week, t.pl.key, { quiet: true });
+    }
+    this._fixing = false;
+    this._flash(todo.some((t) => t.restored) ? "Gelöschte Zeitpläne wieder angelegt" : "Zeitpläne umbenannt");
   }
 
   // ---------- Thermostat gewechselt ----------
@@ -408,66 +466,39 @@ class HeizplanCard extends HTMLElement {
 
   async _migrateFrom(oldEnt) {
     const hass = this._hass;
-    const ent = this._config.entity;
     const oldBase = `heizplan_${oldEnt.replace(/^climate\./, "")}`;
     const ownTags = this._plans.map((pl) => pl.tag);
     const oldName = this._friendly(oldEnt);
-    const newName = this._schedName();
     this._migrating = true;
-    this._saving = true;
     this._render();
     try {
       const all = (await hass.callWS({ type: "scheduler" })) || [];
-      const scheds = all.filter((s) => this._isPlanSched(s) && this._schedTarget(s) === oldEnt);
-      for (const s of scheds) {
-        const keep = (s.tags || []).some((t) => ownTags.includes(t));
-        const tags = keep ? s.tags : (s.tags || []).map((t) => (t.startsWith(oldBase) ? this._tag + t.slice(oldBase.length) : t));
-        const timeslots = (s.timeslots || []).map((t) => ({
-          start: t.start,
-          ...(t.stop ? { stop: t.stop } : {}),
-          ...(t.conditions?.length
-            ? {
-                conditions: t.conditions.map((c) => ({
-                  entity_id: c.entity_id,
-                  ...(c.attribute ? { attribute: c.attribute } : {}),
-                  value: c.value,
-                  match_type: c.match_type || "is",
-                })),
-                condition_type: t.condition_type || "and",
-                ...(t.track_conditions != null ? { track_conditions: t.track_conditions } : {}),
-              }
-            : {}),
-          actions: (t.actions || []).map((a) => ({
-            service: a.service,
-            entity_id: a.entity_id === oldEnt ? ent : a.entity_id,
-            ...(a.service_data ? { service_data: a.service_data } : {}),
-          })),
-        }));
-        await hass.callService("scheduler", "add", {
-          name: String(s.name || `Heizplan ${newName}`).replace(oldName, newName),
-          weekdays: s.weekdays,
-          repeat_type: s.repeat_type || "repeat",
-          ...(s.start_date ? { start_date: s.start_date } : {}),
-          ...(s.end_date ? { end_date: s.end_date } : {}),
-          tags,
-          timeslots,
-        });
-        await hass.callService("scheduler", "remove", { entity_id: s.entity_id });
+      const old = all.filter((s) => this._isPlanSched(s) && this._schedTarget(s) === oldEnt);
+      // je Plan (Normal, Urlaub) den alten Wochenplan lesen und unter diesem Thermostat neu speichern,
+      // dabei entstehen Namen und Tags wie beim normalen Speichern
+      for (const pl of this._plans) {
+        const keep = old.some((s) => (s.tags || []).includes(pl.tag));
+        const oldTag = keep ? pl.tag : oldBase + pl.tag.slice(this._tag.length);
+        const scheds = old.filter((s) => (s.tags || []).includes(oldTag));
+        if (!scheds.length) continue;
+        const week = this._weekFrom(scheds);
+        this._storeBackup(pl.tag, week);
+        await this._save(week, pl.key, { quiet: true });
       }
-      // manuelle Vorgabe am alten Thermostat verwerfen, sie würde sonst die alten Pläne wieder einschalten
-      for (const s of all.filter((x) => (x.tags || []).includes(`${oldBase}_override`))) {
-        await hass.callService("scheduler", "remove", { entity_id: s.entity_id });
-      }
-      this._saving = false;
+      // alte Zeitpläne und eine manuelle Vorgabe am alten Thermostat entfernen
+      const gone = [
+        ...old.filter((s) => !(s.tags || []).some((t) => ownTags.includes(t))),
+        ...all.filter((x) => (x.tags || []).includes(`${oldBase}_override`)),
+      ];
+      for (const s of gone) await hass.callService("scheduler", "remove", { entity_id: s.entity_id });
+      this._migrating = false;
       await this._load();
-      if (!this._override) await this._applyCurrentPlan();
       this._flash(`Wochenplan von ${oldName} übernommen`);
     } catch (e) {
-      this._saving = false;
+      this._migrating = false;
       this._flash(`Fehler beim Übernehmen: ${e.message || e}`);
       await this._load();
     }
-    this._migrating = false;
     this._render();
   }
 
@@ -501,7 +532,7 @@ class HeizplanCard extends HTMLElement {
     return k;
   }
 
-  async _save(newWeek) {
+  async _save(newWeek, planKey = this._plan, { quiet = false } = {}) {
     const hass = this._hass;
     this._saving = true;
     this._render();
@@ -511,7 +542,7 @@ class HeizplanCard extends HTMLElement {
       const wd = this._config.workday_entity;
       const groups = new Map();
       for (const d of DAYS) {
-        const entries = normalizeDay(newWeek[d.key] || this._dayEntries(d.key));
+        const entries = normalizeDay(newWeek[d.key] || this._dayEntries(d.key, this._weeks?.[planKey] || {}));
         const kind = wd && WORKDAYS.includes(d.key) ? "werktag" : "";
         const k = kind + JSON.stringify(entries);
         if (!groups.has(k)) groups.set(k, { entries, days: [], kind });
@@ -522,9 +553,11 @@ class HeizplanCard extends HTMLElement {
         groups.set("feiertag", { entries: hol, days: [...WORKDAYS], kind: "feiertag" });
       }
       const roomName = this._schedName();
-      const plan = this._planObj();
+      const plan = this._planObj(planKey);
       const planName = this._plans.length > 1 ? `${plan.label} ` : "";
-      for (const s of this._schedByPlan[plan.key] || []) {
+      // frisch lesen: auch Zeitpläne entfernen, die inzwischen anderswo (z. B. zweiter Browser) angelegt wurden
+      const fresh = ((await hass.callWS({ type: "scheduler" })) || []).filter((s) => (s.tags || []).includes(plan.tag));
+      for (const s of fresh) {
         await hass.callService("scheduler", "remove", { entity_id: s.entity_id });
       }
       let i = 0;
@@ -561,9 +594,11 @@ class HeizplanCard extends HTMLElement {
           timeslots,
         });
       }
-      this._week = newWeek;
+      if (!this._weeks) this._weeks = {};
+      this._weeks[planKey] = newWeek;
+      this._storeBackup(plan.tag, { ...(this._backup(plan.tag) || {}), ...newWeek });
       this._edit = null;
-      this._toast = "Gespeichert";
+      if (!quiet) this._toast = "Gespeichert";
       // aktuellen Modus sofort setzen, damit der Raum nicht bis zum nächsten Wechsel wartet
       if (!this._override) await this._applyCurrentPlan();
     } catch (e) {
