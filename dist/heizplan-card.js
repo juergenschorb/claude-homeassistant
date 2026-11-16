@@ -9,7 +9,7 @@
  * und zeitlich begrenzte manuelle Temperatur (pausiert den Plan bis zum Ende).
  */
 
-const CARD_VERSION = "0.7.1";
+const CARD_VERSION = "0.7.2";
 
 const OVERRIDE_HOURS = [1, 2, 3, 4, 5, 6, 8, 12, 24];
 
@@ -381,9 +381,11 @@ class HeizplanCard extends HTMLElement {
     const room = await this._loadRoom();
     if (room) {
       this._setRoom(room);
+      await this._findLegacy(room);
       this._render();
       return;
     }
+    this._legacy = null;
     if (this._room) {
       this._room = null;
       this._applyConfig(null);
@@ -495,6 +497,76 @@ class HeizplanCard extends HTMLElement {
     }
     this._fixing = false;
     this._flash(todo.some((t) => t.restored) ? "Gelöschte Zeitpläne wieder angelegt" : "Zeitpläne umbenannt");
+  }
+
+  // ---------- Raum ist schon in der Integration, der alte Plan liegt noch im Scheduler ----------
+  async _findLegacy(room) {
+    this._legacy = null;
+    let all;
+    try {
+      all = (await this._hass.callWS({ type: "scheduler" })) || [];
+    } catch (e) {
+      return; // Scheduler nicht installiert
+    }
+    const base = this._userConfig.tag || `heizplan_${room.climate.replace(/^climate\./, "")}`;
+    const plans = {};
+    const scheds = [];
+    for (const pl of this._plans) {
+      const tag = pl.key === this._plans[0].key ? base : `${base}_${pl.key}`;
+      const own = all.filter((s) => (s.tags || []).includes(tag));
+      if (!own.length) continue;
+      scheds.push(...own);
+      const week = {};
+      for (const s of own) {
+        const entries = normalizeDay(
+          (s.timeslots || []).map((t) => ({
+            start: parseTime(t.start),
+            mode: this._modeByPreset(t.actions?.[0]?.service_data?.preset_mode),
+          }))
+        );
+        if (!entries.length) continue;
+        if ((s.tags || []).some((t) => t.endsWith("_feiertag"))) {
+          if (room.workday_entity) week[HOL.key] = entries;
+        } else for (const d of expandWeekdays(s.weekdays)) week[d] = entries;
+      }
+      if (Object.keys(week).length) plans[pl.key] = week;
+    }
+    scheds.push(...all.filter((s) => (s.tags || []).includes(`${base}_override`)));
+    if (scheds.length) this._legacy = { plans, scheds };
+  }
+
+  _legacyHtml() {
+    if (!this._room || !this._legacy) return "";
+    const has = Object.keys(this._legacy.plans).length > 0;
+    return `<div class="note">Für diesen Raum liegen noch Zeitpläne im Scheduler. Sie schalten das Thermostat weiter, zusätzlich zur Heizplan-Integration.
+      <div class="mig">${
+        has ? `<button class="legbtn" data-take="1" ${this._migrating ? "disabled" : ""}>Plan aus dem Scheduler übernehmen</button>` : ""
+      }<button class="legbtn ghost" ${this._migrating ? "disabled" : ""}>Nur im Scheduler löschen</button></div>
+      <div class="phint">Übernehmen ersetzt den Wochenplan dieses Raums durch den aus dem Scheduler und löscht die Zeitpläne dort.</div></div>`;
+  }
+
+  async _takeLegacy(take) {
+    const hass = this._hass;
+    const legacy = this._legacy;
+    this._migrating = true;
+    this._render();
+    try {
+      let room = this._room;
+      if (take) {
+        for (const [plan, week] of Object.entries(legacy.plans)) {
+          room = await hass.callWS({ type: "heizplan/set_week", entry_id: room.entry_id, plan, week });
+        }
+      }
+      for (const s of legacy.scheds) await hass.callService("scheduler", "remove", { entity_id: s.entity_id });
+      this._legacy = null;
+      this._migrating = false;
+      this._setRoom(room);
+      this._flash(take ? "Plan aus dem Scheduler übernommen" : "Zeitpläne im Scheduler gelöscht");
+    } catch (e) {
+      this._migrating = false;
+      this._flash(`Fehler beim Übernehmen: ${e.message || e}`);
+    }
+    this._render();
   }
 
   // ---------- Übernahme in die Heizplan-Integration ----------
@@ -1152,6 +1224,7 @@ class HeizplanCard extends HTMLElement {
         ${this._error ? `<div class="err">${this._error}</div>` : ""}
         ${this._configWarning() ? `<div class="err">${this._configWarning()}</div>` : ""}
         ${this._importHtml()}
+        ${this._legacyHtml()}
         ${this._migrationHtml()}
         ${this._holidayNotice() ? `<div class="note">${this._holidayNotice()}</div>` : ""}
         ${tabs}
@@ -1182,6 +1255,9 @@ class HeizplanCard extends HTMLElement {
               preset_mode: b.dataset.preset,
             })
       )
+    );
+    this.shadowRoot.querySelectorAll(".legbtn").forEach((b) =>
+      b.addEventListener("click", () => !this._migrating && this._takeLegacy(!!b.dataset.take))
     );
     const impName = this.shadowRoot.querySelector(".impname");
     impName?.addEventListener("input", () => (this._impName = impName.value));
@@ -1566,8 +1642,9 @@ const STYLE = `
   .note { background: #2f3a26; color: #cfe8c0; border-radius: 10px; padding: 8px 10px; font-size: 13px; margin-top: 8px; }
   .mig { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
   .mig select, .mig input { flex: 1; min-width: 0; background: var(--card-background-color, #222); color: inherit; border: 1px solid #555; border-radius: 8px; padding: 6px; font: inherit; }
-  .migbtn, .impbtn { background: var(--primary-color, #03a9f4); color: #fff; border: 0; border-radius: 8px; padding: 6px 12px; font: inherit; cursor: pointer; }
-  .migbtn[disabled], .impbtn[disabled] { opacity: .5; cursor: default; }
+  .migbtn, .impbtn, .legbtn { background: var(--primary-color, #03a9f4); color: #fff; border: 0; border-radius: 8px; padding: 6px 12px; font: inherit; cursor: pointer; }
+  .legbtn.ghost { background: none; border: 1px solid #6a6a6a; color: inherit; }
+  .migbtn[disabled], .impbtn[disabled], .legbtn[disabled] { opacity: .5; cursor: default; }
   .row.hol { margin-top: 4px; border-top: 1px solid #3c3c3c; border-radius: 0 0 10px 10px; }
   .loading { color: var(--fg2); font-size: 13px; padding: 10px 0; }
   .toast { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); background: #111; color: #fff; padding: 8px 14px; border-radius: 12px; font-size: 13px; z-index: 5; }
