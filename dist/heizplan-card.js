@@ -9,7 +9,7 @@
  * und zeitlich begrenzte manuelle Temperatur (pausiert den Plan bis zum Ende).
  */
 
-const CARD_VERSION = "0.10.1";
+const CARD_VERSION = "0.10.2";
 
 // Kartensymbol (Flamme + Wochenbalken auf einer kleinen Karte), abschaltbar mit show_icon: false
 const bars = (y, segs) =>
@@ -1860,6 +1860,16 @@ class HeizplanOverviewCard extends HTMLElement {
     return floor ? { id: floorId, name: floor.name, level: floor.level ?? 0 } : null;
   }
 
+  // Für die aufgeklappte Ansicht: woher die Etage kommt
+  _whereText(room) {
+    const h = this._hass;
+    const ent = h?.entities?.[room.climate];
+    const areaId = ent?.area_id || h?.devices?.[ent?.device_id]?.area_id;
+    const area = h?.areas?.[areaId];
+    const floor = area?.floor_id && h?.floors?.[area.floor_id];
+    return `Thermostat ${room.climate} · Bereich: ${area ? area.name : "keiner"} · Etage: ${floor ? floor.name : "keine"}`;
+  }
+
   _groups(rooms) {
     if (!this._config.group_by_floor && !this._sel.size && !this._fixed.size) return [{ name: "", rooms }];
     const all = this._floorGroups(rooms);
@@ -1868,7 +1878,7 @@ class HeizplanOverviewCard extends HTMLElement {
     const groups = sel.length ? all.filter((g) => sel.includes(g.id)) : all;
     if (!this._config.group_by_floor) return [{ name: "", rooms: rooms.filter((r) => groups.some((g) => g.rooms.includes(r))) }];
     // keine Etagen gepflegt: ohne Überschriften
-    return all.length === 1 ? [{ name: "", rooms: all[0].rooms }] : groups;
+    return all.length === 1 && all[0].id === "" ? [{ name: "", rooms: all[0].rooms }] : groups;
   }
 
   _filterHtml(rooms) {
@@ -1966,6 +1976,7 @@ class HeizplanOverviewCard extends HTMLElement {
         ${open ? "" : this._bar(this._entries(room, plan, todayKey), marker)}
         <div class="onext">${[this._nextText(room, now), cl ? "" : `Thermostat ${esc(room.climate)} fehlt`].filter(Boolean).join(" · ")}</div>
         ${week}
+        ${open ? `<div class="onext owhere">${esc(this._whereText(room))}</div>` : ""}
       </div>`;
   }
 
