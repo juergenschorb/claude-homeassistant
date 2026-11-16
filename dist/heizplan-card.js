@@ -9,7 +9,7 @@
  * und zeitlich begrenzte manuelle Temperatur (pausiert den Plan bis zum Ende).
  */
 
-const CARD_VERSION = "0.8.1";
+const CARD_VERSION = "0.8.2";
 
 const OVERRIDE_HOURS = [1, 2, 3, 4, 5, 6, 8, 12, 24];
 
@@ -731,7 +731,11 @@ class HeizplanCard extends HTMLElement {
     const k = dayKey(date);
     const wd = this._config.workday_entity;
     if (this._room && this._room.holiday !== undefined)
-      return this._room.holiday && WORKDAYS.includes(k) && date.toDateString() === new Date().toDateString() ? HOL.key : k;
+      return this._room.holiday && WORKDAYS.includes(k) && date.toDateString() === new Date().toDateString()
+        ? this._room.holiday_day
+          ? HOL.key
+          : "sun" // Integration ab 0.3.1: ein Feiertag läuft immer wie der Sonntag
+        : k;
     if (
       wd &&
       WORKDAYS.includes(k) &&
@@ -1239,6 +1243,11 @@ class HeizplanCard extends HTMLElement {
         ${this._importHtml()}
         ${this._legacyHtml()}
         ${this._migrationHtml()}
+        ${
+          this._room?.holiday && !this._room.holiday_day && WORKDAYS.includes(dayKey(now))
+            ? `<div class="note">Heute gilt der Plan vom Sonntag (Feiertag oder Urlaub zuhause).</div>`
+            : ""
+        }
         ${this._holidayNotice() ? `<div class="note">${this._holidayNotice()}</div>` : ""}
         ${tabs}
         <div class="week">
@@ -1862,7 +1871,8 @@ class HeizplanOverviewCard extends HTMLElement {
     const planLabel =
       room.plan_keys?.length > 1 && room.active_plan ? (plan === "urlaub" ? (room.presence_away ? "Abwesend" : "Urlaub") : "Normal") : "";
     const hol = this._isHoliday(room);
-    const todayKey = WORKDAYS.includes(dayKey(now)) && hol ? HOL.key : dayKey(now);
+    const hasHolDay = room.holiday_day ?? room.workday_entity;
+    const todayKey = WORKDAYS.includes(dayKey(now)) && hol ? (hasHolDay ? HOL.key : "sun") : dayKey(now);
     const nowMin = now.getHours() * 60 + now.getMinutes();
     const marker = `<div class="now" style="left:${(nowMin / DAY_MIN) * 100}%"></div>`;
     const cl = hass?.states?.[room.climate];
@@ -1884,6 +1894,7 @@ class HeizplanOverviewCard extends HTMLElement {
           <div class="oname">${esc(room.name)}</div>
           <span class="chip" style="--c:${mode.color}">${esc(mode.label)}</span>
           ${planLabel ? `<span class="oplan">${planLabel}</span>` : ""}
+          ${todayKey === "sun" && dayKey(now) !== "sun" ? `<span class="oplan">wie So</span>` : ""}
           <span class="oist">${ist != null && !isNaN(ist) ? `${Number(ist).toFixed(1)} °C` : ""}</span>
           <ha-icon class="chev" icon="mdi:chevron-${open ? "up" : "down"}"></ha-icon>
         </div>
