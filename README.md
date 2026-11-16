@@ -44,7 +44,7 @@ Dazu zwei Blueprints:
 ### Manuell
 
 1. `dist/heizplan-card.js` nach `/config/www/heizplan-card.js` kopieren
-2. *Einstellungen → Dashboards → ⋮ → Ressourcen → Ressource hinzufügen*: URL `/local/heizplan-card.js?v=0.5.3`, Typ **JavaScript-Modul**
+2. *Einstellungen → Dashboards → ⋮ → Ressourcen → Ressource hinzufügen*: URL `/local/heizplan-card.js?v=0.5.4`, Typ **JavaScript-Modul**
 3. Bei neuen Versionen Datei ersetzen und `?v=` hochzählen
 
 ## Karte einrichten
@@ -146,8 +146,10 @@ Raumthermostate, Heizperiode, Heizmodus und den Optionstext für „Aus“ ausw�
 - Manuelle Vorgaben liegen als einmalige Zeitpläne mit dem Tag `heizplan_<raum>_override`.
 - Das Tag hängt am Raumthermostat. Wird im Editor ein anderes Thermostat gewählt, bietet die Karte an, den bisherigen Wochenplan zu übernehmen („Hierher übernehmen“). Erst dann steuert der Plan das neue Thermostat, vorher läuft er am alten weiter.
 - „Ventilstellung“ ist nur eine Anzeige. Gesteuert wird immer über das Raumthermostat (`entity`).
+- Die Zeitpläne heißen `Heizplan <Thermostat> <Tage>`. Passt ein Name nicht mehr (anderes Thermostat, neuer Anzeigename), benennt die Karte die Zeitpläne beim Öffnen neu.
+- Die Karte merkt sich den Wochenplan zusätzlich im Browser. Werden Zeitpläne im Scheduler gelöscht, legt sie die Karte beim nächsten Öffnen wieder an. Zum Abschalten eines Raums daher Heizperiode/Heizmodus verwenden oder die Karte entfernen.
 - Die Pläne erscheinen auch in der Scheduler Card. Zum Bearbeiten pro Raum nur eine der beiden Karten verwenden.
 
 ## Stand
 
-Version 0.5.3. Mit Testdaten im Browser geprüft, noch nicht in einer echten Home-Assistant-Instanz.
+Version 0.5.4. Mit Testdaten im Browser geprüft, noch nicht in einer echten Home-Assistant-Instanz.
