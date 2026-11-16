@@ -8,7 +8,7 @@
  * und zeitlich begrenzte manuelle Temperatur (pausiert den Plan bis zum Ende).
  */
 
-const CARD_VERSION = "0.5.2";
+const CARD_VERSION = "0.5.3";
 
 const OVERRIDE_HOURS = [1, 2, 3, 4, 5, 6, 8, 12, 24];
 
@@ -148,6 +148,8 @@ class HeizplanCard extends HTMLElement {
           mode_heat: "Optionstext für den Normal-Plan, genau wie in der Auswahl",
           mode_vacation: "Optionstext für den Urlaubsplan (leer = kein Urlaubsplan)",
           comfort_temperature_entity: "Leer = automatisch (Versatile oder Better Thermostat)",
+          entity: "Wird hier gesteuert. Nach einem Wechsel bietet die Karte an, den bisherigen Wochenplan zu übernehmen",
+          valve_entity: "Nur Anzeige in der Kopfzeile, gesteuert wird immer über das Raumthermostat",
         })[s.name],
       computeLabel: (s) =>
         ({
@@ -197,6 +199,12 @@ class HeizplanCard extends HTMLElement {
     this._panel = null;
     this._man = null;
     this._edit = null;
+    this._migrating = false;
+    // Konfiguration geändert (z. B. anderes Thermostat im Editor): Zeitpläne neu laden
+    if (this._hass) {
+      this._adaptModes();
+      this._load();
+    }
     this._render();
   }
 
@@ -328,6 +336,7 @@ class HeizplanCard extends HTMLElement {
         weeks[pl.key] = week;
       }
       this._weeks = weeks;
+      this._allScheds = all || [];
       // laufende manuelle Vorgabe (einmaliger Zeitplan, der zum Ende den Plan wieder einschaltet)
       this._overrideScheds = (all || []).filter((s) => (s.tags || []).includes(this._overrideTag()));
       this._override = null;
@@ -348,6 +357,117 @@ class HeizplanCard extends HTMLElement {
       this._error = "Scheduler-Komponente nicht gefunden. Bitte über HACS installieren.";
       this._weeks = {};
     }
+    this._render();
+  }
+
+  // ---------- Thermostat gewechselt ----------
+  // Thermostat, das ein Zeitplan steuert (climate.set_preset_mode)
+  _schedTarget(s) {
+    for (const t of s.timeslots || [])
+      for (const a of t.actions || []) if (String(a.service || "").startsWith("climate.") && a.entity_id) return a.entity_id;
+    return null;
+  }
+
+  _isPlanSched(s) {
+    const tags = s.tags || [];
+    return tags.some((t) => t.startsWith("heizplan_")) && !tags.some((t) => t.endsWith("_override"));
+  }
+
+  // Was nach einem Thermostatwechsel noch am alten Thermostat hängt
+  _migration() {
+    if (!this._weeks || !this._allScheds) return null;
+    const own = Object.values(this._schedByPlan).flat();
+    const ent = this._config.entity;
+    // eigener Plan (z. B. mit festem "tag") steuert noch ein anderes Thermostat
+    const wrong = own.map((s) => this._schedTarget(s)).find((t) => t && t !== ent);
+    if (wrong) return { kind: "wrong", from: [wrong] };
+    if (own.length) return null;
+    // kein eigener Plan: Pläne anderer Thermostate zum Übernehmen anbieten
+    const from = [...new Set(this._allScheds.filter((s) => this._isPlanSched(s)).map((s) => this._schedTarget(s)))].filter(
+      (t) => t && t !== ent
+    );
+    return from.length ? { kind: "empty", from } : null;
+  }
+
+  _friendly(ent) {
+    return this._hass?.states?.[ent]?.attributes?.friendly_name || String(ent).replace(/^climate\./, "");
+  }
+
+  _migrationHtml() {
+    const m = this._migration();
+    if (!m) return "";
+    if (m.kind === "wrong")
+      return `<div class="err">Der Wochenplan steuert noch <b>${this._friendly(m.from[0])}</b> (${m.from[0]}), nicht dieses Thermostat.
+        <div class="mig"><button class="migbtn" data-from="${m.from[0]}" ${this._migrating ? "disabled" : ""}>Auf ${this._friendly(this._config.entity)} umstellen</button></div></div>`;
+    return `<div class="note">Für dieses Thermostat gibt es noch keinen Wochenplan. Nach einem Thermostatwechsel läuft der alte Plan sonst weiter am alten Thermostat.
+      <div class="mig"><select class="migsel">${m.from
+        .map((e) => `<option value="${e}">${this._friendly(e)} (${e})</option>`)
+        .join("")}</select><button class="migbtn" ${this._migrating ? "disabled" : ""}>Hierher übernehmen</button></div>
+      <div class="phint">Der Plan wird verschoben: das gewählte Thermostat wird danach nicht mehr von einem Wochenplan gesteuert.</div></div>`;
+  }
+
+  async _migrateFrom(oldEnt) {
+    const hass = this._hass;
+    const ent = this._config.entity;
+    const oldBase = `heizplan_${oldEnt.replace(/^climate\./, "")}`;
+    const ownTags = this._plans.map((pl) => pl.tag);
+    const oldName = this._friendly(oldEnt);
+    const newName = this._schedName();
+    this._migrating = true;
+    this._saving = true;
+    this._render();
+    try {
+      const all = (await hass.callWS({ type: "scheduler" })) || [];
+      const scheds = all.filter((s) => this._isPlanSched(s) && this._schedTarget(s) === oldEnt);
+      for (const s of scheds) {
+        const keep = (s.tags || []).some((t) => ownTags.includes(t));
+        const tags = keep ? s.tags : (s.tags || []).map((t) => (t.startsWith(oldBase) ? this._tag + t.slice(oldBase.length) : t));
+        const timeslots = (s.timeslots || []).map((t) => ({
+          start: t.start,
+          ...(t.stop ? { stop: t.stop } : {}),
+          ...(t.conditions?.length
+            ? {
+                conditions: t.conditions.map((c) => ({
+                  entity_id: c.entity_id,
+                  ...(c.attribute ? { attribute: c.attribute } : {}),
+                  value: c.value,
+                  match_type: c.match_type || "is",
+                })),
+                condition_type: t.condition_type || "and",
+                ...(t.track_conditions != null ? { track_conditions: t.track_conditions } : {}),
+              }
+            : {}),
+          actions: (t.actions || []).map((a) => ({
+            service: a.service,
+            entity_id: a.entity_id === oldEnt ? ent : a.entity_id,
+            ...(a.service_data ? { service_data: a.service_data } : {}),
+          })),
+        }));
+        await hass.callService("scheduler", "add", {
+          name: String(s.name || `Heizplan ${newName}`).replace(oldName, newName),
+          weekdays: s.weekdays,
+          repeat_type: s.repeat_type || "repeat",
+          ...(s.start_date ? { start_date: s.start_date } : {}),
+          ...(s.end_date ? { end_date: s.end_date } : {}),
+          tags,
+          timeslots,
+        });
+        await hass.callService("scheduler", "remove", { entity_id: s.entity_id });
+      }
+      // manuelle Vorgabe am alten Thermostat verwerfen, sie würde sonst die alten Pläne wieder einschalten
+      for (const s of all.filter((x) => (x.tags || []).includes(`${oldBase}_override`))) {
+        await hass.callService("scheduler", "remove", { entity_id: s.entity_id });
+      }
+      this._saving = false;
+      await this._load();
+      if (!this._override) await this._applyCurrentPlan();
+      this._flash(`Wochenplan von ${oldName} übernommen`);
+    } catch (e) {
+      this._saving = false;
+      this._flash(`Fehler beim Übernehmen: ${e.message || e}`);
+      await this._load();
+    }
+    this._migrating = false;
     this._render();
   }
 
@@ -817,6 +937,7 @@ class HeizplanCard extends HTMLElement {
         ${panel}
         ${this._error ? `<div class="err">${this._error}</div>` : ""}
         ${this._configWarning() ? `<div class="err">${this._configWarning()}</div>` : ""}
+        ${this._migrationHtml()}
         ${this._holidayNotice() ? `<div class="note">${this._holidayNotice()}</div>` : ""}
         ${tabs}
         <div class="week">
@@ -847,6 +968,10 @@ class HeizplanCard extends HTMLElement {
             })
       )
     );
+    this.shadowRoot.querySelector(".migbtn")?.addEventListener("click", (ev) => {
+      const from = ev.currentTarget.dataset.from || this.shadowRoot.querySelector(".migsel")?.value;
+      if (from && !this._migrating) this._migrateFrom(from);
+    });
     this._bindPanels(soll, a);
   }
 
@@ -1220,6 +1345,10 @@ const STYLE = `
   .lg i, .entry i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; }
   .err { background: #5a2a2a; color: #ffb3b3; border-radius: 10px; padding: 8px 10px; font-size: 13px; margin-top: 8px; }
   .note { background: #2f3a26; color: #cfe8c0; border-radius: 10px; padding: 8px 10px; font-size: 13px; margin-top: 8px; }
+  .mig { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+  .mig select { flex: 1; min-width: 0; background: var(--card-background-color, #222); color: inherit; border: 1px solid #555; border-radius: 8px; padding: 6px; font: inherit; }
+  .migbtn { background: var(--primary-color, #03a9f4); color: #fff; border: 0; border-radius: 8px; padding: 6px 12px; font: inherit; cursor: pointer; }
+  .migbtn[disabled] { opacity: .5; cursor: default; }
   .row.hol { margin-top: 4px; border-top: 1px solid #3c3c3c; border-radius: 0 0 10px 10px; }
   .loading { color: var(--fg2); font-size: 13px; padding: 10px 0; }
   .toast { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); background: #111; color: #fff; padding: 8px 14px; border-radius: 12px; font-size: 13px; z-index: 5; }
