@@ -9,7 +9,7 @@
  * und zeitlich begrenzte manuelle Temperatur (pausiert den Plan bis zum Ende).
  */
 
-const CARD_VERSION = "0.8.0";
+const CARD_VERSION = "0.8.1";
 
 const OVERRIDE_HOURS = [1, 2, 3, 4, 5, 6, 8, 12, 24];
 
@@ -1432,6 +1432,13 @@ class HeizplanCard extends HTMLElement {
               <button data-q="workday">Mo–Fr</button><button data-q="weekend">Sa–So</button><button data-q="all">Alle</button>
             </div>
           </div>
+          ${
+            this._room && this._edit.day === HOL.key && this._week?.[HOL.key]?.length
+              ? `<div class="holreset"><button class="holbtn">Wie Sonntag</button><span>Entfernt die eigenen Feiertag-Zeiten, dann gilt wieder der Sonntag.</span></div>`
+              : this._room && this._edit.day === HOL.key
+                ? `<div class="holreset"><span>Der Feiertag folgt dem Sonntag. Erst mit „Speichern“ bekommt er eigene Zeiten.</span></div>`
+                : ""
+          }
           <div class="actions">
             <button class="cancel">Abbrechen</button>
             <button class="save">Speichern</button>
@@ -1457,6 +1464,7 @@ class HeizplanCard extends HTMLElement {
     const ed = this._edit;
     root.querySelector(".back").addEventListener("click", () => this._closeEditor());
     root.querySelector(".cancel").addEventListener("click", () => this._closeEditor());
+    root.querySelector(".holbtn")?.addEventListener("click", () => this._saveRoom({ [HOL.key]: [] }, this._plan));
     root.querySelector(".save").addEventListener("click", () => {
       const week = { ...this._week };
       const entries = normalizeDay(ed.entries);
@@ -1694,6 +1702,8 @@ const STYLE = `
   .dchk.on { background: var(--acc); color: #111; font-weight: 600; }
   .quick { display: flex; gap: 6px; margin-top: 8px; }
   .quick button { background: none; border: 1px solid #4a4a4a; color: var(--fg2); border-radius: 10px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
+  .holreset { display: flex; align-items: center; gap: 10px; margin-top: 14px; font-size: 12px; color: var(--fg2); }
+  .holbtn { background: none; border: 1px solid #6a6a6a; color: var(--fg); border-radius: 10px; padding: 6px 12px; cursor: pointer; white-space: nowrap; font: inherit; font-size: 13px; }
   .actions { display: flex; gap: 10px; margin-top: 18px; }
   .actions button { flex: 1; border-radius: 12px; padding: 11px; border: none; cursor: pointer; font-weight: 600; }
   .cancel { background: var(--bg2); color: var(--fg); }
