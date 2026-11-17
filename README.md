@@ -169,6 +169,10 @@ Die Räume werden nach Etage gruppiert, wenn die Thermostate in Home Assistant e
 
 Ab 0.10.1 wählst du im Karteneditor unter „Angezeigte Etagen“ (`floors:`), welche Etagen die Übersicht zeigt, z. B. nur DG oder EG + DG. Leer heißt alle. Die Karte zeigt dann nur noch die Räume dieser Etagen. Wer in der Karte selbst umschalten möchte, schaltet mit `floor_filter: true` zusätzlich Schaltflächen je Etage ein.
 
+Ab 0.12.0 gibt es für die Raumkarte die **kompakte Ansicht** (`compact: true` oder im Karteneditor „Kompakte Ansicht“): Die Karte zeigt nur die Kopfzeile (Modus, Soll, aktiver Plan, Raumtemperatur) und den Plan des heutigen Tages. Antippen klappt sie mit Temperaturen, Manuell und Mo–So auf, ein Tipp auf die Kopfzeile klappt sie wieder zu.
+
+![Kompakte Ansicht](docs/vorschau-kompakt.png)
+
 Ab 0.9.0 zeigen beide Karten oben links das Heizplan-Symbol. Mit `show_icon: false` (oder im Karteneditor „Symbol anzeigen“) blendest du es aus.
 
 Optional nur bestimmte Räume:

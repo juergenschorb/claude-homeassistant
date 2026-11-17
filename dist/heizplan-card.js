@@ -9,7 +9,7 @@
  * und zeitlich begrenzte manuelle Temperatur (pausiert den Plan bis zum Ende).
  */
 
-const CARD_VERSION = "0.11.1";
+const CARD_VERSION = "0.12.0";
 
 // Kartensymbol (Flamme + Wochenbalken auf einer kleinen Karte), abschaltbar mit show_icon: false
 const bars = (y, segs) =>
@@ -134,6 +134,7 @@ class HeizplanCard extends HTMLElement {
           selector: { entity: { filter: [{ domain: "climate" }, { domain: "sensor", integration: "heizplan" }] } },
         },
         { name: "name", selector: { text: {} } },
+        { name: "compact", selector: { boolean: {} } },
         { name: "show_icon", selector: { boolean: {} } },
         {
           type: "grid",
@@ -201,6 +202,7 @@ class HeizplanCard extends HTMLElement {
           entity: "Raumthermostat oder Heizplan-Raum",
           name: "Name",
           show_icon: "Symbol anzeigen (Standard: an)",
+          compact: "Kompakte Ansicht (nur Kopfzeile und heutiger Tag, Antippen klappt auf)",
           temperature_entity: "Raumtemperatur (optional)",
           window_entity: "Fensterkontakt (optional)",
           valve_entity: "Ventilstellung (optional)",
@@ -1188,14 +1190,16 @@ class HeizplanCard extends HTMLElement {
           : null;
 
     const todayKey = this._keyFor(now);
-    const rows = this._days().map((d) => {
+    const compact = !!this._config.compact;
+    const collapsed = compact && !this._expanded;
+    const rows = this._days().filter((d) => !collapsed || d.key === todayKey).map((d) => {
       const entries = this._dayEntries(d.key);
       const isToday = d.key === todayKey;
       const marker = isToday ? `<div class="now" style="left:${(nowMin / DAY_MIN) * 100}%"></div>` : "";
       return `<div class="row ${isToday ? "today" : ""} ${d.key === HOL.key ? "hol" : ""}" data-day="${d.key}">
         <div class="dlabel">${d.short}</div>
         <div class="bar">${this._segments(entries)}${marker}</div>
-        <ha-icon class="chev" icon="mdi:chevron-right"></ha-icon>
+        ${collapsed ? "" : `<ha-icon class="chev" icon="mdi:chevron-right"></ha-icon>`}
       </div>`;
     }).join("");
 
@@ -1260,10 +1264,7 @@ class HeizplanCard extends HTMLElement {
       return;
     }
 
-    this.shadowRoot.innerHTML = `
-      <style>${STYLE}</style>
-      <ha-card>
-        <div class="head">
+    const headHtml = `<div class="head${compact ? " chead" : ""}">
           ${this._config.show_icon === false ? "" : ICON_SVG}
           <div class="headmain">
             <div class="title">${this._name()}</div>
@@ -1276,7 +1277,35 @@ class HeizplanCard extends HTMLElement {
             </div>
           </div>
           <div class="ist">${ist != null && !isNaN(ist) ? Number(ist).toFixed(1) : "–"}<small>°C</small></div>
-        </div>
+          ${compact ? `<ha-icon class="cchev" icon="mdi:chevron-${collapsed ? "down" : "up"}"></ha-icon>` : ""}
+        </div>`;
+
+    if (collapsed) {
+      // Kompakte Ansicht: Kopfzeile und der heutige Tag, Antippen klappt die ganze Karte auf
+      const warn = this._error || this._configWarning();
+      const ovShort = this._override
+        ? `<div class="note">Manuell${soll != null ? ` ${deg(soll)} °C` : ""} aktiv, Wochenplan pausiert</div>`
+        : "";
+      this.shadowRoot.innerHTML = `
+      <style>${STYLE}</style>
+      <ha-card class="compact">
+        ${headHtml}
+        ${warn ? `<div class="err">${warn}</div>` : ""}
+        ${ovShort}
+        <div class="week">${this._week ? rows : `<div class="loading">Lade Zeitpläne …</div>`}</div>
+        ${this._toast ? `<div class="toast">${this._toast}</div>` : ""}
+      </ha-card>`;
+      this.shadowRoot.querySelector("ha-card").addEventListener("click", () => {
+        this._expanded = true;
+        this._render();
+      });
+      return;
+    }
+
+    this.shadowRoot.innerHTML = `
+      <style>${STYLE}</style>
+      <ha-card>
+        ${headHtml}
         <div class="presets">${presetBtns}</div>
         ${ovHtml}
         ${tools}
@@ -1302,6 +1331,12 @@ class HeizplanCard extends HTMLElement {
         ${this._saving ? `<div class="toast">Speichere …</div>` : ""}
       </ha-card>`;
 
+    if (compact)
+      this.shadowRoot.querySelector(".head").addEventListener("click", () => {
+        this._expanded = false;
+        this._panel = null;
+        this._render();
+      });
     this.shadowRoot.querySelectorAll(".row").forEach((r) =>
       r.addEventListener("click", () => this._openEditor(r.dataset.day))
     );
@@ -1652,6 +1687,11 @@ const STYLE = `
   .head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
   .title { font-size: 18px; font-weight: 600; }
   .hpicon { width: 40px; height: 40px; flex: none; }
+  .chead { cursor: pointer; }
+  .cchev { color: var(--fg2); align-self: center; flex: none; }
+  ha-card.compact { cursor: pointer; }
+  ha-card.compact .week { margin-top: 10px; }
+  ha-card.compact .row { grid-template-columns: 28px 1fr; cursor: inherit; }
   .headmain { flex: 1; min-width: 0; }
   .otitle { display: flex; align-items: center; gap: 10px; }
   .otitle .hpicon { width: 32px; height: 32px; }
