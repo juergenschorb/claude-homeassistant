@@ -2,7 +2,7 @@
 
 # Heizplan Card
 
-Wochenplan pro Raum für Home Assistant: Komfort, Eco und Frostschutz als farbige Zeitleiste, Tageseditor zum Ziehen, eigene Pläne für Normal und Urlaub. Die Pläne laufen über die [Scheduler-Komponente](https://github.com/nielsfaber/scheduler-component) im Hintergrund weiter, auch wenn kein Dashboard offen ist.
+Wochenplan pro Raum für Home Assistant: Komfort, Eco und Frostschutz als farbige Zeitleiste, Tageseditor zum Ziehen, eigene Pläne für Normal und Urlaub. Die Pläne liegen in der Integration [Heizplan](https://github.com/juergenschorb/heizplan), ein Plan je Raum, und laufen im Hintergrund weiter, auch wenn kein Dashboard offen ist.
 
 | Wochenansicht | Tageseditor |
 | --- | --- |
@@ -18,20 +18,15 @@ Wochenplan pro Raum für Home Assistant: Komfort, Eco und Frostschutz als farbig
 - Kopf mit Ist- und Solltemperatur, aktivem Modus, Ventilöffnung und Fensterstatus
 - Knöpfe zum sofortigen Umschalten (Komfort / Eco / Frostschutz)
 - Tageseditor: auf den Balken tippen fügt einen Abschnitt ein, Griffe ziehen verschiebt (15-min-Raster), Modus pro Abschnitt, auf andere Tage übernehmen (Mo–Fr, Sa–So, Alle)
-- Normal- und Urlaubsplan als Reiter; jeder Plan läuft nur, wenn Heizperiode und Heizmodus passen
+- Normal- und Urlaubs- bzw. Abwesend-Plan als Reiter; welcher Plan gilt, entscheidet die Integration (Heizperiode, Heizmodus, Anwesenheit)
 - **Temperaturen je Raum**: Komfort/Eco/Frostschutz-Temperatur pro Raum mit − / + einstellen
-- **Feiertag**: eigene Zeile „Ft“, heizt anfangs wie Sonntag und lässt sich wie jeder Tag bearbeiten
+- **Feiertag**: an Feiertagen und bei „Urlaub zuhause“ gilt Mo–Fr der Plan vom Sonntag
 - **Manuell auf Zeit**: z. B. 26 °C für 5 Stunden; der Wochenplan pausiert so lange und übernimmt danach wieder
-- Komplett per GUI konfigurierbar
-
-Dazu zwei Blueprints:
-
-- **Heizung – Vorheizen mit Lernfunktion**: heizt so früh vor, dass die Komforttemperatur zum geplanten Zeitpunkt erreicht ist, lernt die Aufheizrate je Raum und berücksichtigt die Außentemperatur
-- **Heizung – Aus / außerhalb der Heizperiode**: schaltet die Raumthermostate bei Heizmodus „Aus“ oder außerhalb der Heizperiode aus
+- Kompakte Ansicht, Übersicht aller Räume, komplett per GUI konfigurierbar
 
 ## Voraussetzungen
 
-- Integration [Heizplan](https://github.com/juergenschorb/heizplan) (Marketplace, empfohlen) **oder** die [Scheduler-Komponente](https://github.com/nielsfaber/scheduler-component) (Marketplace, bisheriger Weg)
+- Integration [Heizplan](https://github.com/juergenschorb/heizplan) ab Version 0.4.0 (Marketplace), je Raum ein Eintrag unter *Einstellungen → Geräte & Dienste → Heizplan*
 - Ein Raumthermostat (`climate.…`) mit Presets, z. B. [Versatile Thermostat](https://github.com/jmcollin78/versatile_thermostat) (`comfort`, `eco`, `frost`) oder [Better Thermostat](https://github.com/KartoffelToby/better_thermostat) ab 1.9 (`comfort`, `eco`, `away`)
 
 ## Installation
@@ -48,7 +43,7 @@ Seit Home Assistant 2026.11 ist HACS als „Marketplace“ eingebaut. Ein vorhan
 ### Manuell
 
 1. `dist/heizplan-card.js` nach `/config/www/heizplan-card.js` kopieren
-2. *Einstellungen → Dashboards → ⋮ → Ressourcen → Ressource hinzufügen*: URL `/local/heizplan-card.js?v=0.11.1`, Typ **JavaScript-Modul**
+2. *Einstellungen → Dashboards → ⋮ → Ressourcen → Ressource hinzufügen*: URL `/local/heizplan-card.js?v=0.14.0`, Typ **JavaScript-Modul**
 3. Bei neuen Versionen Datei ersetzen und `?v=` hochzählen
 
 ## Karte einrichten
@@ -57,51 +52,31 @@ Dashboard bearbeiten → *Karte hinzufügen* → **Heizplan Card**. Alles lässt
 
 | Feld | Bedeutung |
 | --- | --- |
-| Raumthermostat | `climate`-Entität des Raums (Pflicht) |
-| Name | Anzeigename auf der Karte, sonst Name des Thermostats. Die Zeitpläne heißen immer nach dem Thermostat |
+| Raumthermostat oder Heizplan-Raum | der Raum (`sensor.heizplan_<raum>`) oder das Thermostat des Raums (Pflicht). Mit dem Raum bleibt die Karte beim Tausch des Thermostats unverändert |
+| Name | Anzeigename auf der Karte, sonst Raumname |
+| Kompakte Ansicht | nur Kopfzeile und heutiger Tag, Antippen klappt auf |
 | Raumtemperatur | eigener Temperatursensor (optional) |
 | Fensterkontakt | zeigt „Fenster offen“ (optional) |
-| Ventilstellung | `number` oder `sensor` in % (optional) |
-| Grundmodus | Modus für Tage ohne Plan (Standard Eco) |
-| Heizperiode | Schalter (`input_boolean`, `binary_sensor`, `switch`); Pläne laufen nur, wenn er an ist |
-| Heizmodus | zentrale Auswahl (`input_select`/`select`), z. B. Aus / Heizen / Urlaub |
-| Feiertage | optional: Feiertagskalender (`calendar.…`, z. B. Integration „Feiertage“/Holiday) oder Arbeitstag-Sensor (Workday). Schaltet die Zeile „Feiertag“ ein |
-| Option „Heizen“ | Optionstext, bei dem der Normal-Plan läuft |
-| Option „Urlaub“ | Optionstext, bei dem der Urlaubsplan läuft (leer = kein Urlaubsplan) |
-
+| Ventilstellung | `number` oder `sensor` in %, nur Anzeige (optional) |
 | Temperatur Komfort / Eco / Frostschutz | `number` je Preset (optional, sonst automatisch gefunden) |
 
-Stimmt ein Optionstext nicht mit der Auswahl überein, zeigt die Karte einen Hinweis mit den vorhandenen Optionen.
-
-Die Karte **liest** Heizperiode und Heizmodus nur. Umgeschaltet wird zentral, z. B. über einen Kalender oder ein eigenes Dashboard-Element. Die Reiter „Normal“ / „Urlaub“ wählen nur, welcher Plan angezeigt und bearbeitet wird; der grüne Punkt zeigt, welcher gerade gilt.
+Thermostat, Heizperiode, Heizmodus, Anwesenheit und Feiertage stellst du beim Raum in der Integration ein (*Einstellungen → Geräte & Dienste → Heizplan → Konfigurieren*), nicht in der Karte. Gibt es für das Thermostat noch keinen Raum, weist die Karte darauf hin.
 
 Beispiel in YAML:
 
 ```yaml
 type: custom:heizplan-card
-entity: climate.wohnzimmer
+entity: sensor.heizplan_wohnzimmer
 name: Wohnzimmer
 window_entity: binary_sensor.wohnzimmer_fenster
 valve_entity: number.wohnzimmer_ventil
-season_entity: input_boolean.heizperiode
-mode_entity: input_select.heizmodus
-mode_heat: Heizen
-mode_vacation: Urlaub
 ```
 
-Erweitert (nur YAML): eigene Modi/Farben mit `modes:` (`key`, `label`, `color`, optional `preset`), eigene Pläne mit `plans:` (`key`, `label`, `conditions: [{entity, state}]`), eigener Tag mit `tag:`.
+Erweitert (nur YAML): eigene Modi/Farben mit `modes:` (`key`, `label`, `color`, optional `preset`).
 
 ## Feiertage
 
-![Feiertag](docs/vorschau-feiertag.png)
-
-1. Feiertagskalender auswählen: die Integration **Feiertage** (Holiday) legt z. B. `calendar.deutschland_bw` an, der an Feiertagen „an“ ist. Alternativ geht ein Arbeitstag-Sensor der Integration **Workday** (an Arbeitstagen „an“).
-2. In der Karte unter „Heizperiode und Heizmodus“ diese Entität bei **Feiertage** wählen.
-3. Die Karte zeigt eine Zeile **Ft** unter Sonntag. Einmal einen Tag öffnen und **Speichern**, damit die Pläne neu angelegt werden.
-
-So funktioniert es: Mo–Fr-Zeitpläne laufen nur an Nicht-Feiertagen. Ein zusätzlicher Feiertags-Zeitplan für Mo–Fr läuft an Feiertagen. Solange „Feiertag“ nicht eigens bearbeitet wurde, übernimmt er den Sonntag. Fällt ein Feiertag auf einen Samstag, gilt der Samstagsplan. Mit Urlaubsplan gilt das für beide Pläne getrennt.
-
-Im Blueprint „Vorheizen“ dieselbe Entität unter **Feiertage** eintragen, damit an Feiertagen nicht für den Werktags-Komfort vorgeheizt wird.
+An Feiertagen (Mo–Fr) und bei „Urlaub zuhause“ gilt der Plan vom Sonntag. Den Feiertagskalender (Integration **Feiertage**, `calendar.…`) oder einen Arbeitstag-Sensor (**Workday**) trägst du beim Raum in der Integration ein. Die Karte zeigt an solchen Tagen einen Hinweis und markiert den Sonntag als heute.
 
 ## Temperaturen je Raum
 
@@ -115,43 +90,20 @@ Bei Versatile Thermostat gilt: Damit es diese Entitäten pro Raum gibt, muss im 
 
 Knopf **Manuell** → Temperatur mit − / + wählen, Dauer antippen (1–24 h) → **Starten**:
 
-1. Die Wochenpläne dieses Raums werden pausiert (Scheduler-Schalter aus).
-2. Das Thermostat bekommt die gewählte Temperatur (`climate.set_temperature`).
-3. Ein einmaliger Zeitplan (Tag `heizplan_<raum>_override`) schaltet zum Ende die Pläne wieder ein und setzt den Modus, der laut Plan dann gilt (mit denselben Bedingungen wie Normal/Urlaub). Danach löscht er sich selbst.
+1. Das Thermostat bekommt die gewählte Temperatur (`climate.set_temperature`).
+2. Die Integration pausiert den Wochenplan dieses Raums bis zum Ende und schaltet dann wieder nach Plan.
 
-Das läuft im Hintergrund, auch ohne offenes Dashboard und über einen Neustart hinweg. **Beenden** oder ein Modus-Knopf beendet die Vorgabe sofort. Steht „Wochenplan pausiert“ ohne Vorgabe da, holt **Fortsetzen** den Plan zurück.
+Das läuft in der Integration, auch ohne offenes Dashboard und über einen Neustart hinweg. **Beenden** oder ein Modus-Knopf beendet die Vorgabe sofort.
 
-Funktioniert mit Versatile und Better Thermostat. In Versatile Thermostat sollte „Dauer manueller Übersteuerung“ (`manual_override_duration_min`) auf 0 stehen, sonst setzt VT die Temperatur schon vorher zurück. Das Feld gibt es erst nach Version 10.5.1; ältere Versionen setzen ohnehin nichts zurück. Das Vorheizen-Blueprint lässt pausierte Pläne aus.
+In Versatile Thermostat sollte „Dauer manueller Übersteuerung“ (`manual_override_duration_min`) auf 0 stehen, sonst setzt VT die Temperatur schon vorher zurück. Das Feld gibt es erst nach Version 10.5.1; ältere Versionen setzen ohnehin nichts zurück.
 
-## Blueprints
+## Zusammenspiel mit der Integration
 
-[![Blueprint importieren](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Fjuergenschorb%2Fclaude-homeassistant%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fheizung_vorheizen.yaml) Vorheizen mit Lernfunktion
+Die Karte speichert nichts selbst, alles liegt in der Integration [Heizplan](https://github.com/juergenschorb/heizplan) auf dem Home-Assistant-Server.
 
-[![Blueprint importieren](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Fjuergenschorb%2Fclaude-homeassistant%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fheizung_aus.yaml) Aus / außerhalb der Heizperiode
-
-### Vorheizen mit Lernfunktion
-
-- Alle 5 Minuten wird der nächste Komfort-Beginn aus dem Wochenplan gelesen. Benötigte Zeit = (Komforttemperatur − Ist) ÷ Aufheizrate; so viel früher schaltet die Automation auf Komfort (begrenzt auf „Maximale Vorheizzeit“).
-- Bei jedem Komfort-Start wird gemessen, wie schnell der Raum warm wird, und die Aufheizrate angepasst (70 % alt + 30 % neu). Messungen mit offenem Fenster zählen nicht.
-- Mit Außentemperatur wird die Rate auf 0 °C außen umgerechnet gelernt und beim Vorheizen korrigiert (Standard 2 %/K: bei −10 °C 20 % länger).
-- Pro Raum einen Helfer *Zahlenwert* anlegen, z. B. „Aufheizrate Wohnzimmer“, 0.2–5, Schritt 0.05, Einheit `K/h`, Startwert ca. 1.0.
-- **Plan-Tag** = `heizplan_` + Name des Thermostats ohne `climate.` (z. B. `heizplan_wohnzimmer`).
-- Unter „Nur vorheizen wenn …“ dieselben Bedingungen wie beim Normal-Plan eintragen (Heizperiode an, Heizmodus = Heizen).
-
-### Aus / außerhalb der Heizperiode
-
-Raumthermostate, Heizperiode, Heizmodus und den Optionstext für „Aus“ auswählen. Bei „Aus“ oder Heizperiode aus werden die Thermostate ausgeschaltet, sonst auf Heizen gestellt.
-
-## Mit der Heizplan-Integration (ab 0.6.0)
-
-Ist die Integration [Heizplan](https://github.com/juergenschorb/heizplan) installiert, speichert die Karte dort: ein Plan je Raum, auf dem Home-Assistant-Server.
-
-- Räume legst du in der Integration an (*Einstellungen → Geräte & Dienste → Heizplan → Raum hinzufügen*). Ab Karte 0.13.0 gibt es keine Übernahme aus dem Scheduler mehr; Pläne, die dort noch liegen, trägst du in der Karte neu ein.
-- Gibt es für ein Thermostat noch keinen Raum, arbeitet die Karte wie bisher mit dem Scheduler, falls er installiert ist, und weist sonst auf die fehlende Raumanlage hin.
-- Für Räume der Integration gelten Thermostat, Heizperiode, Heizmodus und Feiertage aus der Integration (*Einstellungen → Geräte & Dienste → Heizplan → Konfigurieren*), nicht mehr die Felder im Karten-Editor.
-- Ab Integration 0.3.0 kann je Raum zusätzlich eine Anwesenheit (Modus der Etage) gewählt werden: „Abwesend“ schaltet auf den Urlaubs-/Abwesend-Plan, „Urlaub zuhause“ nutzt Mo–Fr den Plan vom Sonntag. Die Karte zeigt dann den zweiten Plan als „Abwesend“.
-- Für Räume der Integration (ab 0.3.1) gibt es keine eigene Zeile „Feiertag“ mehr: an Feiertagen und bei „Urlaub zuhause“ gilt Mo–Fr der Plan vom Sonntag. Die Karte zeigt das als Hinweis an.
-- Als Entität der Karte kann das Thermostat stehen bleiben oder der Raum gewählt werden (`sensor.heizplan_<raum>`). Mit dem Raum bleibt die Karte beim Tausch des Thermostats unverändert.
+- Räume legst du in der Integration an (*Einstellungen → Geräte & Dienste → Heizplan → Raum hinzufügen*). Eine Übernahme aus dem Scheduler gibt es nicht mehr; vorhandene Pläne trägst du in der Karte neu ein.
+- Ab Integration 0.3.0 kann je Raum eine Anwesenheit (Modus der Etage) gewählt werden: „Abwesend“ schaltet auf den zweiten Plan, „Urlaub zuhause“ nutzt Mo–Fr den Plan vom Sonntag.
+- Als Entität der Karte kann das Thermostat oder der Raum (`sensor.heizplan_<raum>`) stehen.
 
 ## Übersicht aller Räume (ab 0.7.0)
 
@@ -184,18 +136,6 @@ rooms:
   - sensor.heizplan_buero
 ```
 
-## Wie gespeichert wird (ohne Integration, über den Scheduler)
-
-- Pläne liegen in der Scheduler-Komponente mit dem Tag `heizplan_<raum>` (Normal) bzw. `heizplan_<raum>_urlaub`, je Gruppe gleicher Tage ein Zeitplan.
-- Jeder Wechselpunkt ruft `climate.set_preset_mode` auf; die Bedingungen (Heizperiode, Heizmodus) hängen an jedem Zeitraum.
-- Beim Speichern werden die bisherigen Pläne dieses Raums und Plans ersetzt und der gültige Modus sofort gesetzt.
-- Manuelle Vorgaben liegen als einmalige Zeitpläne mit dem Tag `heizplan_<raum>_override`.
-- Das Tag hängt am Raumthermostat. Wird im Editor ein anderes Thermostat gewählt, bietet die Karte an, den bisherigen Wochenplan zu übernehmen („Hierher übernehmen“). Erst dann steuert der Plan das neue Thermostat, vorher läuft er am alten weiter.
-- „Ventilstellung“ ist nur eine Anzeige. Gesteuert wird immer über das Raumthermostat (`entity`).
-- Die Zeitpläne heißen `Heizplan <Thermostat> <Tage>`. Passt ein Name nicht mehr (anderes Thermostat, neuer Anzeigename), benennt die Karte die Zeitpläne beim Öffnen neu.
-- Die Karte merkt sich den Wochenplan zusätzlich im Browser. Werden Zeitpläne im Scheduler gelöscht, legt sie die Karte beim nächsten Öffnen wieder an. Zum Abschalten eines Raums daher Heizperiode/Heizmodus verwenden oder die Karte entfernen.
-- Die Pläne erscheinen auch in der Scheduler Card. Zum Bearbeiten pro Raum nur eine der beiden Karten verwenden.
-
 ## Stand
 
-Version 0.8.2. Mit Testdaten im Browser geprüft, noch nicht in einer echten Home-Assistant-Instanz.
+Version 0.14.0, benötigt Integration 0.4.0. Mit Testdaten im Browser geprüft, noch nicht in einer echten Home-Assistant-Instanz.
