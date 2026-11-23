@@ -1,15 +1,12 @@
 /*
  * Heizplan Card
  * Wochenplan pro Raum mit Komfort/Eco/Frostschutz, Tageseditor und Plänen für Normal/Urlaub.
- * Mit der Integration „Heizplan“ (Marketplace, juergenschorb/heizplan) liegen die Pläne dort, ein Plan je Raum.
- * Ohne sie speichert die Karte in der Scheduler-Komponente (Marketplace, nielsfaber/scheduler-component):
- * je Gruppe gleicher Tage ein Zeitplan, der zu jedem Wechselpunkt
- * climate.set_preset_mode am Raumthermostat aufruft.
+ * Die Pläne liegen in der Integration „Heizplan“ (Marketplace, juergenschorb/heizplan), ein Plan je Raum.
  * Dazu: Preset-Temperaturen je Raum (number-Entitäten von Versatile oder Better Thermostat)
  * und zeitlich begrenzte manuelle Temperatur (pausiert den Plan bis zum Ende).
  */
 
-const CARD_VERSION = "0.12.0";
+const CARD_VERSION = "0.14.0";
 
 // Kartensymbol (Flamme + Wochenbalken auf einer kleinen Karte), abschaltbar mit show_icon: false
 const bars = (y, segs) =>
@@ -41,9 +38,6 @@ const DAYS = [
   { key: "sun", short: "So", long: "Sonntag" },
 ];
 
-// Feiertag: eigener Tag, gilt Mo–Fr an Feiertagen. Quelle: Feiertagskalender (calendar.*, "on" = Feiertag)
-// oder Arbeitstag-Sensor (Workday, "off" = Feiertag)
-const HOL = { key: "hol", short: "Ft", long: "Feiertag" };
 const WORKDAYS = ["mon", "tue", "wed", "thu", "fri"];
 
 const DEFAULT_MODES = [
@@ -57,12 +51,6 @@ const DAY_MIN = 1440;
 
 const pad = (n) => String(n).padStart(2, "0");
 const fmt = (m) => (m >= DAY_MIN ? "24:00" : `${pad(Math.floor(m / 60))}:${pad(m % 60)}`);
-const parseTime = (s) => {
-  const [h, m] = String(s).split(":").map((x) => parseInt(x, 10));
-  return (h || 0) * 60 + (m || 0);
-};
-const toSchedTime = (m) => (m >= DAY_MIN ? "00:00" : fmt(m));
-const isoDate = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const dayKey = (d) => DAYS[(d.getDay() + 6) % 7].key;
 const deg = (v) => Number(v).toFixed(1).replace(".", ",");
 // Temperaturen immer in 0,5-Grad-Schritten, krumme Werte rasten auf das nächste halbe Grad
@@ -108,17 +96,6 @@ function normalizeDay(entries) {
   return out;
 }
 
-function expandWeekdays(weekdays) {
-  const res = new Set();
-  for (const w of weekdays || []) {
-    if (w === "daily") DAYS.forEach((d) => res.add(d.key));
-    else if (w === "workday") ["mon", "tue", "wed", "thu", "fri"].forEach((d) => res.add(d));
-    else if (w === "weekend") ["sat", "sun"].forEach((d) => res.add(d));
-    else res.add(w);
-  }
-  return [...res];
-}
-
 class HeizplanCard extends HTMLElement {
   static getStubConfig(hass) {
     const climate = Object.keys(hass?.states || {}).find((e) => e.startsWith("climate."));
@@ -143,36 +120,6 @@ class HeizplanCard extends HTMLElement {
             { name: "temperature_entity", selector: { entity: { domain: "sensor" } } },
             { name: "window_entity", selector: { entity: { domain: "binary_sensor" } } },
             { name: "valve_entity", selector: { entity: { domain: ["number", "sensor"] } } },
-            {
-              name: "default_mode",
-              selector: {
-                select: {
-                  options: [
-                    { value: "eco", label: "Eco" },
-                    { value: "comfort", label: "Komfort" },
-                    { value: "frost", label: "Frostschutz" },
-                  ],
-                },
-              },
-            },
-          ],
-        },
-        {
-          type: "expandable",
-          name: "",
-          title: "Nur ohne Heizplan-Integration: Heizperiode, Heizmodus, Feiertage",
-          schema: [
-            { name: "season_entity", selector: { entity: { domain: ["input_boolean", "binary_sensor", "switch"] } } },
-            { name: "mode_entity", selector: { entity: { domain: ["input_select", "select"] } } },
-            { name: "workday_entity", selector: { entity: { domain: ["calendar", "binary_sensor", "input_boolean"] } } },
-            {
-              type: "grid",
-              name: "",
-              schema: [
-                { name: "mode_heat", selector: { text: {} } },
-                { name: "mode_vacation", selector: { text: {} } },
-              ],
-            },
           ],
         },
         {
@@ -188,13 +135,8 @@ class HeizplanCard extends HTMLElement {
       ],
       computeHelper: (s) =>
         ({
-          season_entity: "Nur für Räume, die noch über den Scheduler laufen. Für Räume der Heizplan-Integration leer lassen: dort gelten die Einstellungen des Raums (Geräte & Dienste → Heizplan → Konfigurieren)",
-          mode_entity: "Zentrale Auswahl, z. B. Aus / Heizen / Urlaub",
-          workday_entity: "Feiertagskalender (z. B. Integration „Feiertage“) oder Arbeitstag-Sensor (Workday). Dann gibt es eine Zeile „Feiertag“",
-          mode_heat: "Optionstext für den Normal-Plan, genau wie in der Auswahl",
-          mode_vacation: "Optionstext für den Urlaubsplan (leer = kein Urlaubsplan)",
           comfort_temperature_entity: "Leer = automatisch (Versatile oder Better Thermostat)",
-          entity: "Thermostat oder Raum der Heizplan-Integration (sensor.heizplan_…). Ohne Integration: nach einem Wechsel bietet die Karte an, den bisherigen Wochenplan zu übernehmen",
+          entity: "Raum der Heizplan-Integration (sensor.heizplan_…) oder das Thermostat des Raums",
           valve_entity: "Nur Anzeige in der Kopfzeile, gesteuert wird immer über das Raumthermostat",
         })[s.name],
       computeLabel: (s) =>
@@ -206,12 +148,6 @@ class HeizplanCard extends HTMLElement {
           temperature_entity: "Raumtemperatur (optional)",
           window_entity: "Fensterkontakt (optional)",
           valve_entity: "Ventilstellung (optional)",
-          default_mode: "Grundmodus für neue Pläne",
-          season_entity: "Heizperiode",
-          mode_entity: "Heizmodus",
-          workday_entity: "Feiertage (optional)",
-          mode_heat: "Option „Heizen“",
-          mode_vacation: "Option „Urlaub“",
           comfort_temperature_entity: "Temperatur Komfort",
           eco_temperature_entity: "Temperatur Eco",
           frost_temperature_entity: "Temperatur Frostschutz",
@@ -220,31 +156,28 @@ class HeizplanCard extends HTMLElement {
   }
 
   setConfig(config) {
-    if (!config || !config.entity) throw new Error("Bitte 'entity' (Raumthermostat) angeben");
+    if (!config || !config.entity) throw new Error("Bitte 'entity' (Heizplan-Raum oder Thermostat) angeben");
     this._userConfig = config;
     this._room = null;
     this._backend = false;
+    this._error = null;
     this._applyConfig(null);
     this._weeks = null;
-    this._schedByPlan = {};
     this._override = null;
-    this._overrideScheds = [];
     this._pendingTemp = {};
     this._panel = null;
     this._man = null;
     this._edit = null;
-    this._migrating = false;
-    this._fixTried = new Set();
-    // Konfiguration geändert (z. B. anderes Thermostat im Editor): Zeitpläne neu laden
+    // Konfiguration geändert (z. B. anderer Raum im Editor): neu laden
     if (this._hass) this._load();
     this._render();
   }
 
-  // wirksame Konfiguration: mit Heizplan-Raum kommen Thermostat und Bedingungen aus der Integration
+  // wirksame Konfiguration: Thermostat und Bedingungen kommen aus dem Heizplan-Raum
   _applyConfig(room) {
     let config = this._userConfig;
     if (room) {
-      config = { ...config, entity: room.climate, plans: undefined };
+      config = { ...config, entity: room.climate };
       for (const k of ["season_entity", "mode_entity", "mode_heat", "mode_vacation", "workday_entity", "default_mode"])
         config[k] = room[k] || undefined;
     }
@@ -256,22 +189,11 @@ class HeizplanCard extends HTMLElement {
       ...m,
       preset: m.preset || m.key,
     }));
-    this._tag = config.tag || `heizplan_${config.entity.replace(/^climate\./, "")}`;
-    // Pläne (z. B. Normal / Urlaub), jeweils mit eigenen Bedingungen
-    const plans = room
-      ? (room.plan_keys || ["normal"]).map((key) => ({
-          key,
-          label: key === "urlaub" ? (room.presence_away ? "Abwesend" : "Urlaub") : "Normal",
-          conditions: [],
-        }))
-      : config.plans && config.plans.length
-        ? config.plans
-        : this._plansFromConfig(config);
-    this._plans = plans.map((pl, i) => ({
-      ...pl,
-      label: pl.label || pl.key,
-      tag: pl.tag || (i === 0 ? this._tag : `${this._tag}_${pl.key}`),
-      conditions: (pl.conditions || []).map((c) => ({ entity_id: c.entity, value: String(c.state) })),
+    // Pläne (Normal / Urlaub bzw. Abwesend)
+    const keys = room?.plan_keys?.length ? room.plan_keys : ["normal"];
+    this._plans = keys.map((key) => ({
+      key,
+      label: key === "urlaub" ? (room?.presence_away ? "Abwesend" : "Urlaub") : "Normal",
     }));
     if (!this._plans.some((pl) => pl.key === this._plan)) this._plan = this._plans[0].key;
     this._adaptModes();
@@ -284,9 +206,6 @@ class HeizplanCard extends HTMLElement {
     const weeks = {};
     for (const pl of this._plans) weeks[pl.key] = room.plans?.[pl.key] || {};
     this._weeks = weeks;
-    this._schedByPlan = {};
-    this._allScheds = null;
-    this._overrideScheds = [];
     const end = room.override?.until ? new Date(room.override.until) : null;
     this._override = end && !isNaN(end) ? { end } : null;
     this._error = null;
@@ -316,22 +235,6 @@ class HeizplanCard extends HTMLElement {
     if (frost && pm.length && !pm.includes("frost") && pm.includes("away")) frost.preset = "away";
   }
 
-  // Pläne aus Heizperiode / Heizmodus ableiten (GUI-Konfiguration)
-  _plansFromConfig(c) {
-    const base = c.season_entity ? [{ entity: c.season_entity, state: "on" }] : [];
-    const normal = { key: "normal", label: "Normal", conditions: [...base] };
-    if (c.mode_entity && c.mode_heat) normal.conditions.push({ entity: c.mode_entity, state: c.mode_heat });
-    const plans = [normal];
-    if (c.mode_entity && c.mode_vacation) {
-      plans.push({
-        key: "urlaub",
-        label: "Urlaub",
-        conditions: [...base, { entity: c.mode_entity, state: c.mode_vacation }],
-      });
-    }
-    return plans;
-  }
-
   set hass(hass) {
     const first = !this._hass;
     const old = this._hass;
@@ -351,7 +254,7 @@ class HeizplanCard extends HTMLElement {
     }
     // nur neu zeichnen, wenn sich eine Entität dieser Karte geändert hat;
     // sonst ersetzt jede Zustandsänderung in HA die Knöpfe und Klicks gehen verloren
-    if (!this._edit && !this._typing() && (first || this._relevantEntities().some((e) => old.states[e] !== hass.states[e]))) this._render();
+    if (!this._edit && (first || this._relevantEntities().some((e) => old.states[e] !== hass.states[e]))) this._render();
   }
 
   _relevantEntities() {
@@ -359,29 +262,19 @@ class HeizplanCard extends HTMLElement {
     const list = [c.entity, c.temperature_entity, c.window_entity, c.valve_entity, c.season_entity, c.mode_entity, c.workday_entity];
     for (const m of this._modes) list.push(this._presetTempEntity(m));
     list.push(this._room?.sensor);
-    list.push(...this._planSwitches());
     return list.filter(Boolean);
   }
 
   getCardSize() {
-    return 6;
-  }
-
-  // beim Tippen des Raumnamens nicht neu zeichnen, sonst verliert das Feld den Fokus
-  _typing() {
-    return !!this.shadowRoot?.activeElement?.classList?.contains("impname");
+    return this._config?.compact && !this._expanded ? 3 : 6;
   }
 
   connectedCallback() {
-    this._tick = setInterval(() => !this._edit && !this._typing() && this._render(), 60000);
+    this._tick = setInterval(() => !this._edit && this._render(), 60000);
   }
 
   disconnectedCallback() {
     clearInterval(this._tick);
-    if (this._unsub) {
-      this._unsub.then((u) => u && u()).catch(() => {});
-      this._unsub = null;
-    }
   }
 
   // ---------- Daten ----------
@@ -392,13 +285,6 @@ class HeizplanCard extends HTMLElement {
   set _week(v) {
     if (!this._weeks) this._weeks = {};
     this._weeks[this._plan] = v;
-  }
-
-  _holidayNotice() {
-    const scheds = this._schedByPlan?.[this._plan] || [];
-    if (this._room || !this._config.workday_entity || !scheds.length) return "";
-    const has = scheds.some((s) => (s.tags || []).some((t) => t.endsWith("_feiertag")));
-    return has ? "" : "Feiertag ist noch nicht gespeichert: einen Tag öffnen und Speichern tippen (Feiertag = wie Sonntag).";
   }
 
   _configWarning() {
@@ -417,10 +303,8 @@ class HeizplanCard extends HTMLElement {
   }
 
   _planActive(pl) {
-    // mit Heizplan-Raum entscheidet die Integration (Heizperiode, Heizmodus, Anwesenheit)
-    if (this._room) return this._room.active_plan === pl.key;
-    const s = this._hass?.states || {};
-    return pl.conditions.every((c) => s[c.entity_id]?.state === c.value);
+    // die Integration entscheidet (Heizperiode, Heizmodus, Anwesenheit)
+    return this._room?.active_plan === pl.key;
   }
 
   _mode(key) {
@@ -436,359 +320,35 @@ class HeizplanCard extends HTMLElement {
     const room = await this._loadRoom();
     if (room) {
       this._setRoom(room);
-      await this._findLegacy(room);
       this._render();
       return;
     }
-    this._legacy = null;
     if (this._room) {
       this._room = null;
       this._applyConfig(null);
     }
-    if (!this._userConfig.entity.startsWith("climate.")) {
-      this._error = this._backend
-        ? "Diesen Raum gibt es in der Heizplan-Integration nicht (mehr)."
-        : "Heizplan-Integration nicht gefunden. Bitte über den Marketplace installieren oder ein Thermostat wählen.";
-      this._weeks = {};
-      this._render();
-      return;
-    }
-    try {
-      const all = await this._hass.callWS({ type: "scheduler" });
-      const weeks = {};
-      for (const pl of this._plans) {
-        const scheds = (all || []).filter((s) => (s.tags || []).includes(pl.tag));
-        this._schedByPlan[pl.key] = scheds;
-        weeks[pl.key] = this._weekFrom(scheds);
-      }
-      this._weeks = weeks;
-      this._allScheds = all || [];
-      // laufende manuelle Vorgabe (einmaliger Zeitplan, der zum Ende den Plan wieder einschaltet)
-      this._overrideScheds = (all || []).filter((s) => (s.tags || []).includes(this._overrideTag()));
-      this._override = null;
-      for (const s of this._overrideScheds) {
-        const t = s.timeslots?.[0]?.start;
-        if (!s.start_date || !t) continue;
-        const [y, mo, d] = s.start_date.split("-").map(Number);
-        const end = new Date(y, mo - 1, d, Math.floor(parseTime(t) / 60), parseTime(t) % 60);
-        if (!this._override || end > this._override.end) this._override = { end };
-      }
-      this._error = null;
-      if (!this._unsub && this._hass.connection) {
-        this._unsub = this._hass.connection
-          .subscribeMessage(() => !this._saving && !this._edit && this._load(), { type: "scheduler_updated" })
-          .catch(() => null);
-      }
-    } catch (e) {
-      this._error = "Scheduler-Komponente nicht gefunden. Bitte über den Marketplace installieren.";
-      this._weeks = {};
-    }
-    this._render();
-    this._autoFix();
-  }
-
-  // Wochenplan aus Scheduler-Zeitplänen lesen
-  _weekFrom(scheds) {
-    const week = {};
-    const wd = this._config.workday_entity;
-    for (const s of scheds) {
-      const entries = (s.timeslots || []).map((t) => ({
-        start: parseTime(t.start),
-        mode: this._modeByPreset(t.actions?.[0]?.service_data?.preset_mode),
-      }));
-      const isHol = (s.timeslots?.[0]?.conditions || []).some((c) => c.entity_id === wd && String(c.value) === this._holValue());
-      if (wd && isHol) week[HOL.key] = normalizeDay(entries);
-      else for (const d of expandWeekdays(s.weekdays)) week[d] = normalizeDay(entries);
-    }
-    return week;
-  }
-
-  // ---------- Sicherung, Wiederherstellen, Umbenennen ----------
-  // Kopie des Wochenplans im Browser, damit im Scheduler gelöschte Zeitpläne wieder angelegt werden können
-  _backup(tag) {
-    try {
-      return JSON.parse(localStorage.getItem(`heizplan-card:${tag}`) || "null");
-    } catch (e) {
-      return null;
-    }
-  }
-
-  _storeBackup(tag, week) {
-    try {
-      if (week && Object.keys(week).length) localStorage.setItem(`heizplan-card:${tag}`, JSON.stringify(week));
-    } catch (e) {
-      /* kein Speicher im Browser */
-    }
-  }
-
-  _schedPrefix() {
-    return `Heizplan ${this._schedName()} `;
-  }
-
-  // gelöschte Tage aus der Sicherung neu anlegen, Zeitpläne mit altem Namen neu benennen
-  async _autoFix() {
-    if (this._room || this._fixing || this._saving || this._edit || this._migrating || !this._weeks || this._error) return;
-    const todo = [];
-    for (const pl of this._plans) {
-      const week = this._weeks[pl.key] || {};
-      const scheds = this._schedByPlan[pl.key] || [];
-      const backup = this._backup(pl.tag) || {};
-      const days = this._days().map((d) => d.key);
-      const missing = days.filter((d) => !week[d]?.length && backup[d]?.length);
-      const misnamed = scheds.some((s) => !String(s.name || "").startsWith(this._schedPrefix()));
-      if ((missing.length || misnamed) && !this._fixTried.has(pl.tag)) {
-        const merged = { ...week };
-        for (const d of missing) merged[d] = backup[d];
-        todo.push({ pl, week: merged, restored: missing.length > 0 });
-      } else if (scheds.length) {
-        this._storeBackup(pl.tag, { ...backup, ...week });
-      }
-    }
-    if (!todo.length) return;
-    this._fixing = true;
-    for (const t of todo) {
-      this._fixTried.add(t.pl.tag);
-      await this._save(t.week, t.pl.key, { quiet: true });
-    }
-    this._fixing = false;
-    this._flash(todo.some((t) => t.restored) ? "Gelöschte Zeitpläne wieder angelegt" : "Zeitpläne umbenannt");
-  }
-
-  // ---------- Raum ist schon in der Integration, der alte Plan liegt noch im Scheduler ----------
-  async _findLegacy(room) {
-    this._legacy = null;
-    let all;
-    try {
-      all = (await this._hass.callWS({ type: "scheduler" })) || [];
-    } catch (e) {
-      return; // Scheduler nicht installiert
-    }
-    const base = this._userConfig.tag || `heizplan_${room.climate.replace(/^climate\./, "")}`;
-    const plans = {};
-    const scheds = [];
-    for (const pl of this._plans) {
-      const tag = pl.key === this._plans[0].key ? base : `${base}_${pl.key}`;
-      const own = all.filter((s) => (s.tags || []).includes(tag));
-      if (!own.length) continue;
-      scheds.push(...own);
-      const week = {};
-      for (const s of own) {
-        const entries = normalizeDay(
-          (s.timeslots || []).map((t) => ({
-            start: parseTime(t.start),
-            mode: this._modeByPreset(t.actions?.[0]?.service_data?.preset_mode),
-          }))
-        );
-        if (!entries.length) continue;
-        if ((s.tags || []).some((t) => t.endsWith("_feiertag"))) {
-          if (room.holiday_day ?? room.workday_entity) week[HOL.key] = entries;
-        } else for (const d of expandWeekdays(s.weekdays)) week[d] = entries;
-      }
-      if (Object.keys(week).length) plans[pl.key] = week;
-    }
-    scheds.push(...all.filter((s) => (s.tags || []).includes(`${base}_override`)));
-    if (scheds.length) this._legacy = { plans, scheds };
-  }
-
-  _legacyHtml() {
-    if (!this._room || !this._legacy) return "";
-    const has = Object.keys(this._legacy.plans).length > 0;
-    return `<div class="note">Für diesen Raum liegen noch Zeitpläne im Scheduler. Sie schalten das Thermostat weiter, zusätzlich zur Heizplan-Integration.
-      <div class="mig">${
-        has ? `<button class="legbtn" data-take="1" ${this._migrating ? "disabled" : ""}>Plan aus dem Scheduler übernehmen</button>` : ""
-      }<button class="legbtn ghost" ${this._migrating ? "disabled" : ""}>Nur im Scheduler löschen</button></div>
-      <div class="phint">Übernehmen ersetzt den Wochenplan dieses Raums durch den aus dem Scheduler und löscht die Zeitpläne dort.</div></div>`;
-  }
-
-  async _takeLegacy(take) {
-    const hass = this._hass;
-    const legacy = this._legacy;
-    this._migrating = true;
-    this._render();
-    try {
-      let room = this._room;
-      if (take) {
-        for (const [plan, week] of Object.entries(legacy.plans)) {
-          room = await hass.callWS({ type: "heizplan/set_week", entry_id: room.entry_id, plan, week });
-        }
-      }
-      for (const s of legacy.scheds) await hass.callService("scheduler", "remove", { entity_id: s.entity_id });
-      this._legacy = null;
-      this._migrating = false;
-      this._setRoom(room);
-      this._flash(take ? "Plan aus dem Scheduler übernommen" : "Zeitpläne im Scheduler gelöscht");
-    } catch (e) {
-      this._migrating = false;
-      this._flash(`Fehler beim Übernehmen: ${e.message || e}`);
-    }
-    this._render();
-  }
-
-  // ---------- Übernahme in die Heizplan-Integration ----------
-  _importHtml() {
-    if (!this._backend || this._room || !this._weeks || this._error || this._userConfig.plans?.length) return "";
-    return `<div class="note">Die Heizplan-Integration ist installiert. Dieser Raum läuft noch über den Scheduler.
-      <div class="mig"><input class="impname" type="text" value="${esc(this._impName ?? this._userConfig.name ?? this._schedName())}" placeholder="Raumname" /><button class="impbtn" ${this._migrating ? "disabled" : ""}>Raum in Heizplan übernehmen</button></div>
-      <div class="phint">Legt den Raum mit diesem Wochenplan in der Integration an und entfernt die Zeitpläne aus dem Scheduler.</div></div>`;
-  }
-
-  async _importToBackend() {
-    const hass = this._hass;
-    const c = this._userConfig;
-    this._migrating = true;
-    this._render();
-    try {
-      const plans = {};
-      for (const pl of this._plans) {
-        const week = {};
-        for (const [day, entries] of Object.entries(this._weeks?.[pl.key] || {})) if (entries?.length) week[day] = entries;
-        if (Object.keys(week).length) plans[pl.key] = week;
-      }
-      const options = {};
-      for (const k of ["season_entity", "mode_entity", "mode_heat", "mode_vacation", "workday_entity", "default_mode"])
-        if (c[k]) options[k] = c[k];
-      const tags = [...this._plans.map((pl) => pl.tag), this._overrideTag()];
-      const name = (this._impName ?? c.name ?? "").trim() || this._schedName();
-      const room = await hass.callWS({ type: "heizplan/import", name, climate: c.entity, options, plans });
-      // ab jetzt schaltet die Integration: Zeitpläne im Scheduler entfernen
-      const all = (await hass.callWS({ type: "scheduler" }).catch(() => [])) || [];
-      for (const s of all.filter((x) => (x.tags || []).some((t) => tags.includes(t)))) {
-        await hass.callService("scheduler", "remove", { entity_id: s.entity_id });
-      }
-      try {
-        for (const pl of this._plans) localStorage.removeItem(`heizplan-card:${pl.tag}`);
-      } catch (e) {
-        /* kein Speicher im Browser */
-      }
-      this._migrating = false;
-      this._setRoom(room);
-      this._flash("Raum in Heizplan übernommen");
-    } catch (e) {
-      this._migrating = false;
-      this._flash(`Fehler beim Übernehmen: ${e.message || e}`);
-    }
-    this._render();
-  }
-
-  // ---------- Thermostat gewechselt ----------
-  // Thermostat, das ein Zeitplan steuert (climate.set_preset_mode)
-  _schedTarget(s) {
-    for (const t of s.timeslots || [])
-      for (const a of t.actions || []) if (String(a.service || "").startsWith("climate.") && a.entity_id) return a.entity_id;
-    return null;
-  }
-
-  _isPlanSched(s) {
-    const tags = s.tags || [];
-    return tags.some((t) => t.startsWith("heizplan_")) && !tags.some((t) => t.endsWith("_override"));
-  }
-
-  // Was nach einem Thermostatwechsel noch am alten Thermostat hängt
-  _migration() {
-    if (this._room || !this._weeks || !this._allScheds) return null;
-    const own = Object.values(this._schedByPlan).flat();
-    const ent = this._config.entity;
-    // eigener Plan (z. B. mit festem "tag") steuert noch ein anderes Thermostat
-    const wrong = own.map((s) => this._schedTarget(s)).find((t) => t && t !== ent);
-    if (wrong) return { kind: "wrong", from: [wrong] };
-    if (own.length) return null;
-    // kein eigener Plan: Pläne anderer Thermostate zum Übernehmen anbieten
-    const from = [...new Set(this._allScheds.filter((s) => this._isPlanSched(s)).map((s) => this._schedTarget(s)))].filter(
-      (t) => t && t !== ent
-    );
-    return from.length ? { kind: "empty", from } : null;
-  }
-
-  _friendly(ent) {
-    return this._hass?.states?.[ent]?.attributes?.friendly_name || String(ent).replace(/^climate\./, "");
-  }
-
-  _migrationHtml() {
-    const m = this._migration();
-    if (!m) return "";
-    if (m.kind === "wrong")
-      return `<div class="err">Der Wochenplan steuert noch <b>${this._friendly(m.from[0])}</b> (${m.from[0]}), nicht dieses Thermostat.
-        <div class="mig"><button class="migbtn" data-from="${m.from[0]}" ${this._migrating ? "disabled" : ""}>Auf ${this._friendly(this._config.entity)} umstellen</button></div></div>`;
-    return `<div class="note">Für dieses Thermostat gibt es noch keinen Wochenplan. Nach einem Thermostatwechsel läuft der alte Plan sonst weiter am alten Thermostat.
-      <div class="mig"><select class="migsel">${m.from
-        .map((e) => `<option value="${e}">${this._friendly(e)} (${e})</option>`)
-        .join("")}</select><button class="migbtn" ${this._migrating ? "disabled" : ""}>Hierher übernehmen</button></div>
-      <div class="phint">Der Plan wird verschoben: das gewählte Thermostat wird danach nicht mehr von einem Wochenplan gesteuert.</div></div>`;
-  }
-
-  async _migrateFrom(oldEnt) {
-    const hass = this._hass;
-    const oldBase = `heizplan_${oldEnt.replace(/^climate\./, "")}`;
-    const ownTags = this._plans.map((pl) => pl.tag);
-    const oldName = this._friendly(oldEnt);
-    this._migrating = true;
-    this._render();
-    try {
-      const all = (await hass.callWS({ type: "scheduler" })) || [];
-      const old = all.filter((s) => this._isPlanSched(s) && this._schedTarget(s) === oldEnt);
-      // je Plan (Normal, Urlaub) den alten Wochenplan lesen und unter diesem Thermostat neu speichern,
-      // dabei entstehen Namen und Tags wie beim normalen Speichern
-      for (const pl of this._plans) {
-        const keep = old.some((s) => (s.tags || []).includes(pl.tag));
-        const oldTag = keep ? pl.tag : oldBase + pl.tag.slice(this._tag.length);
-        const scheds = old.filter((s) => (s.tags || []).includes(oldTag));
-        if (!scheds.length) continue;
-        const week = this._weekFrom(scheds);
-        this._storeBackup(pl.tag, week);
-        await this._save(week, pl.key, { quiet: true });
-      }
-      // alte Zeitpläne und eine manuelle Vorgabe am alten Thermostat entfernen
-      const gone = [
-        ...old.filter((s) => !(s.tags || []).some((t) => ownTags.includes(t))),
-        ...all.filter((x) => (x.tags || []).includes(`${oldBase}_override`)),
-      ];
-      for (const s of gone) await hass.callService("scheduler", "remove", { entity_id: s.entity_id });
-      this._migrating = false;
-      await this._load();
-      this._flash(`Wochenplan von ${oldName} übernommen`);
-    } catch (e) {
-      this._migrating = false;
-      this._flash(`Fehler beim Übernehmen: ${e.message || e}`);
-      await this._load();
-    }
+    this._weeks = {};
+    this._override = null;
+    this._error = this._backend
+      ? "Diesen Raum gibt es in der Heizplan-Integration nicht. Lege ihn unter Einstellungen → Geräte & Dienste → Heizplan → Raum hinzufügen an."
+      : "Heizplan-Integration nicht gefunden. Bitte über den Marketplace installieren.";
     this._render();
   }
 
   _dayEntries(day, week = this._week) {
     const e = week?.[day];
     if (e && e.length) return e;
-    if (day === HOL.key) return this._dayEntries("sun", week); // Feiertag wie Sonntag, bis er eigens gespeichert ist
     return [{ start: 0, mode: this._config.default_mode }];
   }
 
-  // Zustand der Feiertags-Entität an einem Feiertag: Kalender "on", Arbeitstag-Sensor "off"
-  _holValue() {
-    return String(this._config.workday_entity || "").startsWith("calendar.") ? "on" : "off";
-  }
-
   _days() {
-    const hol = this._room?.holiday_day ?? !!this._config.workday_entity;
-    return hol ? [...DAYS, HOL] : DAYS;
+    return DAYS;
   }
 
-  // Tag-Schlüssel für ein Datum; heute Mo–Fr und Arbeitstag-Sensor aus -> Feiertag
+  // Tag-Schlüssel für ein Datum: an einem Feiertag (Mo–Fr) und bei „Urlaub zuhause“ läuft heute der Sonntag
   _keyFor(date) {
     const k = dayKey(date);
-    const wd = this._config.workday_entity;
-    if (this._room && this._room.holiday !== undefined)
-      return this._room.holiday && WORKDAYS.includes(k) && date.toDateString() === new Date().toDateString()
-        ? this._room.holiday_day
-          ? HOL.key
-          : "sun" // Integration ab 0.3.1: ein Feiertag läuft immer wie der Sonntag
-        : k;
-    if (
-      wd &&
-      WORKDAYS.includes(k) &&
-      date.toDateString() === new Date().toDateString() &&
-      this._hass?.states?.[wd]?.state === this._holValue()
-    )
-      return HOL.key;
-    return k;
+    return this._room?.holiday && WORKDAYS.includes(k) && date.toDateString() === new Date().toDateString() ? "sun" : k;
   }
 
   async _saveRoom(newWeek, planKey) {
@@ -810,116 +370,6 @@ class HeizplanCard extends HTMLElement {
       this._toast = null;
       this._render();
     }, 3000);
-  }
-
-  async _save(newWeek, planKey = this._plan, { quiet = false } = {}) {
-    if (this._room) return this._saveRoom(newWeek, planKey);
-    const hass = this._hass;
-    this._saving = true;
-    this._render();
-    try {
-      // gleiche Tage gruppieren
-      // mit Arbeitstag-Sensor: Mo–Fr nur an Arbeitstagen, dazu ein Feiertags-Zeitplan für Mo–Fr
-      const wd = this._config.workday_entity;
-      const groups = new Map();
-      for (const d of DAYS) {
-        const entries = normalizeDay(newWeek[d.key] || this._dayEntries(d.key, this._weeks?.[planKey] || {}));
-        const kind = wd && WORKDAYS.includes(d.key) ? "werktag" : "";
-        const k = kind + JSON.stringify(entries);
-        if (!groups.has(k)) groups.set(k, { entries, days: [], kind });
-        groups.get(k).days.push(d.key);
-      }
-      if (wd) {
-        const hol = normalizeDay(newWeek[HOL.key] || this._dayEntries(HOL.key, newWeek));
-        groups.set("feiertag", { entries: hol, days: [...WORKDAYS], kind: "feiertag" });
-      }
-      const roomName = this._schedName();
-      const plan = this._planObj(planKey);
-      const planName = this._plans.length > 1 ? `${plan.label} ` : "";
-      // frisch lesen: auch Zeitpläne entfernen, die inzwischen anderswo (z. B. zweiter Browser) angelegt wurden
-      const fresh = ((await hass.callWS({ type: "scheduler" })) || []).filter((s) => (s.tags || []).includes(plan.tag));
-      for (const s of fresh) {
-        await hass.callService("scheduler", "remove", { entity_id: s.entity_id });
-      }
-      let i = 0;
-      for (const g of groups.values()) {
-        i += 1;
-        const conds = [...plan.conditions];
-        const hv = this._holValue();
-        if (g.kind) conds.push({ entity_id: wd, value: g.kind === "feiertag" ? hv : hv === "on" ? "off" : "on" });
-        const timeslots = g.entries.map((e, idx) => ({
-          start: fmt(e.start),
-          stop: toSchedTime(idx + 1 < g.entries.length ? g.entries[idx + 1].start : DAY_MIN),
-          ...(conds.length
-            ? {
-                conditions: conds.map((c) => ({ ...c, match_type: "is" })),
-                condition_type: "and",
-                track_conditions: true,
-              }
-            : {}),
-          actions: [
-            {
-              service: "climate.set_preset_mode",
-              entity_id: this._config.entity,
-              service_data: { preset_mode: this._mode(e.mode).preset },
-            },
-          ],
-        }));
-        await hass.callService("scheduler", "add", {
-          name: `Heizplan ${roomName} ${planName}${
-            g.kind === "feiertag" ? "Feiertag" : g.days.map((d) => DAYS.find((x) => x.key === d).short).join(" ")
-          }`,
-          weekdays: g.days,
-          repeat_type: "repeat",
-          tags: g.kind ? [plan.tag, `${plan.tag}_${g.kind}`] : [plan.tag],
-          timeslots,
-        });
-      }
-      if (!this._weeks) this._weeks = {};
-      this._weeks[planKey] = newWeek;
-      this._storeBackup(plan.tag, { ...(this._backup(plan.tag) || {}), ...newWeek });
-      this._edit = null;
-      if (!quiet) this._toast = "Gespeichert";
-      // aktuellen Modus sofort setzen, damit der Raum nicht bis zum nächsten Wechsel wartet
-      if (!this._override) await this._applyCurrentPlan();
-    } catch (e) {
-      this._toast = `Fehler beim Speichern: ${e.message || e}`;
-    }
-    this._saving = false;
-    await this._load();
-    if (this._override) {
-      // manuelle Vorgabe läuft: neue Pläne gleich wieder pausieren und Ende neu anlegen
-      try {
-        await this._pausePlans();
-        await this._writeOverrideEnd(this._override.end);
-        await this._load();
-      } catch (e) {
-        this._toast = `Fehler: ${e.message || e}`;
-      }
-    }
-    setTimeout(() => {
-      this._toast = null;
-      this._render();
-    }, 3000);
-  }
-
-  // Modus eines Plans zu einem Zeitpunkt
-  _entryAt(planKey, date) {
-    const entries = this._dayEntries(this._keyFor(date), this._weeks?.[planKey] || {});
-    const minute = date.getHours() * 60 + date.getMinutes();
-    let cur = entries[0];
-    for (const x of entries) if (x.start <= minute) cur = x;
-    return cur;
-  }
-
-  async _applyCurrentPlan() {
-    const pl = this._plans.find((p) => this._planActive(p));
-    if (!pl) return;
-    const cur = this._entryAt(pl.key, new Date());
-    await this._hass.callService("climate", "set_preset_mode", {
-      entity_id: this._config.entity,
-      preset_mode: this._mode(cur.mode).preset,
-    });
   }
 
   // ---------- Preset-Temperaturen ----------
@@ -980,150 +430,43 @@ class HeizplanCard extends HTMLElement {
     }, 800);
   }
 
-  // ---------- Manuelle Temperatur für x Stunden ----------
-  _overrideTag() {
-    return `${this._tag}_override`;
-  }
-
-  _planSwitches() {
-    return Object.values(this._schedByPlan)
-      .flat()
-      .map((s) => s.entity_id)
-      .filter(Boolean);
-  }
-
-  async _pausePlans() {
-    const sw = this._planSwitches();
-    if (sw.length) await this._hass.callService("switch", "turn_off", { entity_id: sw });
-  }
-
-  async _removeOverrideScheds() {
-    for (const s of this._overrideScheds) {
-      await this._hass.callService("scheduler", "remove", { entity_id: s.entity_id });
-    }
-    this._overrideScheds = [];
-  }
-
-  // Zum Ende: Pläne wieder einschalten und je Plan (mit dessen Bedingungen) den Modus setzen
-  async _writeOverrideEnd(end) {
-    await this._removeOverrideScheds();
-    const hass = this._hass;
-    const base = {
-      weekdays: [dayKey(end)],
-      start_date: isoDate(end),
-      end_date: isoDate(end),
-      repeat_type: "single",
-      tags: [this._overrideTag()],
-    };
-    const time = fmt(end.getHours() * 60 + end.getMinutes());
-    const room = this._schedName();
-    const sw = this._planSwitches();
-    if (sw.length) {
-      await hass.callService("scheduler", "add", {
-        ...base,
-        name: `Heizplan ${room} Manuell Ende`,
-        timeslots: [{ start: time, actions: sw.map((e) => ({ service: "switch.turn_on", entity_id: e })) }],
-      });
-    }
-    for (const pl of this._plans) {
-      const cur = this._entryAt(pl.key, end);
-      await hass.callService("scheduler", "add", {
-        ...base,
-        name: `Heizplan ${room} Manuell Ende ${pl.label}`,
-        timeslots: [
-          {
-            start: time,
-            ...(pl.conditions.length
-              ? { conditions: pl.conditions.map((c) => ({ ...c, match_type: "is" })), condition_type: "and" }
-              : {}),
-            actions: [
-              {
-                service: "climate.set_preset_mode",
-                entity_id: this._config.entity,
-                service_data: { preset_mode: this._mode(cur.mode).preset },
-              },
-            ],
-          },
-        ],
-      });
-    }
-  }
-
   async _startOverride() {
     const { temp, hours } = this._man;
     const end = new Date(Date.now() + hours * 3600000);
     end.setSeconds(0, 0);
     this._busy = true;
     this._render();
-    if (this._room) {
-      try {
-        const room = await this._hass.callWS({
-          type: "heizplan/override",
-          entry_id: this._room.entry_id,
-          temperature: temp,
-          until: end.toISOString(),
-        });
-        this._setRoom(room);
-        this._panel = null;
-        this._flash(`${deg(temp)} °C bis ${fmt(end.getHours() * 60 + end.getMinutes())}`);
-      } catch (e) {
-        this._flash(`Fehler: ${e.message || e}`);
-      }
-      this._busy = false;
-      this._render();
-      return;
-    }
     try {
-      await this._pausePlans();
-      await this._hass.callService("climate", "set_temperature", { entity_id: this._config.entity, temperature: temp });
-      await this._writeOverrideEnd(end);
+      const room = await this._hass.callWS({
+        type: "heizplan/override",
+        entry_id: this._room.entry_id,
+        temperature: temp,
+        until: end.toISOString(),
+      });
+      this._setRoom(room);
       this._panel = null;
       this._flash(`${deg(temp)} °C bis ${fmt(end.getHours() * 60 + end.getMinutes())}`);
     } catch (e) {
       this._flash(`Fehler: ${e.message || e}`);
     }
     this._busy = false;
-    await this._load();
+    this._render();
   }
 
   async _cancelOverride(preset) {
     this._busy = true;
     this._render();
-    if (this._room) {
-      try {
-        const room = await this._hass.callWS({ type: "heizplan/cancel_override", entry_id: this._room.entry_id, apply: !preset });
-        this._setRoom(room);
-        if (preset) {
-          await this._hass.callService("climate", "set_preset_mode", { entity_id: this._config.entity, preset_mode: preset });
-        }
-      } catch (e) {
-        this._flash(`Fehler: ${e.message || e}`);
-      }
-      this._busy = false;
-      this._render();
-      return;
-    }
     try {
-      await this._removeOverrideScheds();
-      const sw = this._planSwitches();
-      if (sw.length) await this._hass.callService("switch", "turn_on", { entity_id: sw });
-      this._override = null;
+      const room = await this._hass.callWS({ type: "heizplan/cancel_override", entry_id: this._room.entry_id, apply: !preset });
+      this._setRoom(room);
       if (preset) {
         await this._hass.callService("climate", "set_preset_mode", { entity_id: this._config.entity, preset_mode: preset });
-      } else {
-        await this._applyCurrentPlan();
       }
     } catch (e) {
       this._flash(`Fehler: ${e.message || e}`);
     }
     this._busy = false;
-    await this._load();
-  }
-
-  _plansPaused() {
-    const s = this._hass?.states || {};
-    const sw = this._planSwitches();
-    return sw.length > 0 && sw.every((e) => s[e]?.state === "off");
+    this._render();
   }
 
   _flash(msg) {
@@ -1134,19 +477,6 @@ class HeizplanCard extends HTMLElement {
       this._toast = null;
       this._render();
     }, 3000);
-  }
-
-  _currentEntry(day, minute) {
-    const entries = this._dayEntries(day);
-    let cur = entries[0];
-    for (const e of entries) if (e.start <= minute) cur = e;
-    return cur;
-  }
-
-  // Name für die Zeitpläne: Thermostat, nicht der Anzeigename der Karte (der kann überall "Heizung" heißen)
-  _schedName() {
-    const st = this._hass?.states?.[this._config.entity];
-    return st?.attributes?.friendly_name || this._config.entity.replace(/^climate\./, "");
   }
 
   _name() {
@@ -1196,7 +526,7 @@ class HeizplanCard extends HTMLElement {
       const entries = this._dayEntries(d.key);
       const isToday = d.key === todayKey;
       const marker = isToday ? `<div class="now" style="left:${(nowMin / DAY_MIN) * 100}%"></div>` : "";
-      return `<div class="row ${isToday ? "today" : ""} ${d.key === HOL.key ? "hol" : ""}" data-day="${d.key}">
+      return `<div class="row ${isToday ? "today" : ""}" data-day="${d.key}">
         <div class="dlabel">${d.short}</div>
         <div class="bar">${this._segments(entries)}${marker}</div>
         ${collapsed ? "" : `<ha-icon class="chev" icon="mdi:chevron-right"></ha-icon>`}
@@ -1216,7 +546,7 @@ class HeizplanCard extends HTMLElement {
             .join("")}</div>`
         : "";
     const planInfo =
-      this._room || this._plans.length > 1 || this._plans[0].conditions.length
+      this._room
         ? activePlan
           ? `<span class="pinfo">Plan aktiv: ${activePlan.label}</span>`
           : `<span class="pinfo off">Kein Plan aktiv (Heizung aus / außerhalb Heizperiode)</span>`
@@ -1251,9 +581,7 @@ class HeizplanCard extends HTMLElement {
             <button class="ovend">Beenden</button>
           </div>`;
         })()
-      : this._plansPaused()
-        ? `<div class="override"><ha-icon icon="mdi:pause-circle-outline"></ha-icon><div><b>Wochenplan pausiert</b><span>Keine manuelle Vorgabe aktiv</span></div><button class="ovend">Fortsetzen</button></div>`
-        : "";
+      : "";
     const panel = this._panel === "temps" ? this._tempsHtml() : this._panel === "manual" ? this._manualHtml(soll, a) : "";
 
     if (this._edit) {
@@ -1279,6 +607,14 @@ class HeizplanCard extends HTMLElement {
           <div class="ist">${ist != null && !isNaN(ist) ? Number(ist).toFixed(1) : "–"}<small>°C</small></div>
           ${compact ? `<ha-icon class="cchev" icon="mdi:chevron-${collapsed ? "down" : "up"}"></ha-icon>` : ""}
         </div>`;
+
+    if (!this._room) {
+      // noch kein Raum geladen oder kein Raum zu diesem Thermostat
+      this.shadowRoot.innerHTML = `<style>${STYLE}</style><ha-card>${headHtml}${
+        this._error ? `<div class="err">${this._error}</div>` : `<div class="loading">Lade Heizplan …</div>`
+      }</ha-card>`;
+      return;
+    }
 
     if (collapsed) {
       // Kompakte Ansicht: Kopfzeile und der heutige Tag, Antippen klappt die ganze Karte auf
@@ -1312,15 +648,11 @@ class HeizplanCard extends HTMLElement {
         ${panel}
         ${this._error ? `<div class="err">${this._error}</div>` : ""}
         ${this._configWarning() ? `<div class="err">${this._configWarning()}</div>` : ""}
-        ${this._importHtml()}
-        ${this._legacyHtml()}
-        ${this._migrationHtml()}
         ${
-          this._room?.holiday && !this._room.holiday_day && WORKDAYS.includes(dayKey(now))
+          this._room?.holiday && WORKDAYS.includes(dayKey(now))
             ? `<div class="note">Heute gilt der Plan vom Sonntag (Feiertag oder Urlaub zuhause).</div>`
             : ""
         }
-        ${this._holidayNotice() ? `<div class="note">${this._holidayNotice()}</div>` : ""}
         ${tabs}
         <div class="week">
           <div class="scale"><span></span><div>${[0, 6, 12, 18, 24].map((h) => `<b style="left:${(h / 24) * 100}%">${h}</b>`).join("")}</div><span></span></div>
@@ -1356,17 +688,6 @@ class HeizplanCard extends HTMLElement {
             })
       )
     );
-    this.shadowRoot.querySelectorAll(".legbtn").forEach((b) =>
-      b.addEventListener("click", () => !this._migrating && this._takeLegacy(!!b.dataset.take))
-    );
-    const impName = this.shadowRoot.querySelector(".impname");
-    impName?.addEventListener("input", () => (this._impName = impName.value));
-    impName?.addEventListener("click", (ev) => ev.stopPropagation());
-    this.shadowRoot.querySelector(".impbtn")?.addEventListener("click", () => !this._migrating && this._importToBackend());
-    this.shadowRoot.querySelector(".migbtn")?.addEventListener("click", (ev) => {
-      const from = ev.currentTarget.dataset.from || this.shadowRoot.querySelector(".migsel")?.value;
-      if (from && !this._migrating) this._migrateFrom(from);
-    });
     this._bindPanels(soll, a);
   }
 
@@ -1518,13 +839,6 @@ class HeizplanCard extends HTMLElement {
               <button data-q="workday">Mo–Fr</button><button data-q="weekend">Sa–So</button><button data-q="all">Alle</button>
             </div>
           </div>
-          ${
-            this._room && this._edit.day === HOL.key && this._week?.[HOL.key]?.length
-              ? `<div class="holreset"><button class="holbtn">Wie Sonntag</button><span>Entfernt die eigenen Feiertag-Zeiten, dann gilt wieder der Sonntag.</span></div>`
-              : this._room && this._edit.day === HOL.key
-                ? `<div class="holreset"><span>Der Feiertag folgt dem Sonntag. Erst mit „Speichern“ bekommt er eigene Zeiten.</span></div>`
-                : ""
-          }
           <div class="actions">
             <button class="cancel">Abbrechen</button>
             <button class="save">Speichern</button>
@@ -1550,12 +864,11 @@ class HeizplanCard extends HTMLElement {
     const ed = this._edit;
     root.querySelector(".back").addEventListener("click", () => this._closeEditor());
     root.querySelector(".cancel").addEventListener("click", () => this._closeEditor());
-    root.querySelector(".holbtn")?.addEventListener("click", () => this._saveRoom({ [HOL.key]: [] }, this._plan));
     root.querySelector(".save").addEventListener("click", () => {
       const week = { ...this._week };
       const entries = normalizeDay(ed.entries);
       for (const d of ed.copyTo) week[d] = entries.map((e) => ({ ...e }));
-      this._save(week);
+      this._saveRoom(week, this._plan);
     });
     root.querySelector(".add").addEventListener("click", () => {
       // neuen Block ans Ende des längsten Abschnitts setzen
@@ -1756,12 +1069,6 @@ const STYLE = `
   .lg i, .entry i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; }
   .err { background: #5a2a2a; color: #ffb3b3; border-radius: 10px; padding: 8px 10px; font-size: 13px; margin-top: 8px; }
   .note { background: #2f3a26; color: #cfe8c0; border-radius: 10px; padding: 8px 10px; font-size: 13px; margin-top: 8px; }
-  .mig { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
-  .mig select, .mig input { flex: 1; min-width: 0; background: var(--card-background-color, #222); color: inherit; border: 1px solid #555; border-radius: 8px; padding: 6px; font: inherit; }
-  .migbtn, .impbtn, .legbtn { background: var(--primary-color, #03a9f4); color: #fff; border: 0; border-radius: 8px; padding: 6px 12px; font: inherit; cursor: pointer; }
-  .legbtn.ghost { background: none; border: 1px solid #6a6a6a; color: inherit; }
-  .migbtn[disabled], .impbtn[disabled], .legbtn[disabled] { opacity: .5; cursor: default; }
-  .row.hol { margin-top: 4px; border-top: 1px solid #3c3c3c; border-radius: 0 0 10px 10px; }
   .loading { color: var(--fg2); font-size: 13px; padding: 10px 0; }
   .toast { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); background: #111; color: #fff; padding: 8px 14px; border-radius: 12px; font-size: 13px; z-index: 5; }
   .editor { width: 100%; }
@@ -1797,8 +1104,6 @@ const STYLE = `
   .dchk.on { background: var(--acc); color: #111; font-weight: 600; }
   .quick { display: flex; gap: 6px; margin-top: 8px; }
   .quick button { background: none; border: 1px solid #4a4a4a; color: var(--fg2); border-radius: 10px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
-  .holreset { display: flex; align-items: center; gap: 10px; margin-top: 14px; font-size: 12px; color: var(--fg2); }
-  .holbtn { background: none; border: 1px solid #6a6a6a; color: var(--fg); border-radius: 10px; padding: 6px 12px; cursor: pointer; white-space: nowrap; font: inherit; font-size: 13px; }
   .actions { display: flex; gap: 10px; margin-top: 18px; }
   .actions button { flex: 1; border-radius: 12px; padding: 11px; border: none; cursor: pointer; font-weight: 600; }
   .cancel { background: var(--bg2); color: var(--fg); }
@@ -1958,17 +1263,9 @@ class HeizplanOverviewCard extends HTMLElement {
     return [...map.values()].sort((a, b) => b.level - a.level || a.name.localeCompare(b.name, "de"));
   }
 
-  _isHoliday(room) {
-    if (room.holiday !== undefined) return room.holiday;
-    const wd = room.workday_entity;
-    if (!wd) return false;
-    return this._hass?.states?.[wd]?.state === (wd.startsWith("calendar.") ? "on" : "off");
-  }
-
   _entries(room, plan, day) {
     const e = room.plans?.[plan]?.[day];
     if (e && e.length) return e;
-    if (day === HOL.key) return this._entries(room, plan, "sun");
     return [{ start: 0, mode: room.default_mode || "eco" }];
   }
 
@@ -2002,17 +1299,14 @@ class HeizplanOverviewCard extends HTMLElement {
     const plan = room.active_plan || "normal";
     const planLabel =
       room.plan_keys?.length > 1 && room.active_plan ? (plan === "urlaub" ? (room.presence_away ? "Abwesend" : "Urlaub") : "Normal") : "";
-    const hol = this._isHoliday(room);
-    const hasHolDay = room.holiday_day ?? room.workday_entity;
-    const todayKey = WORKDAYS.includes(dayKey(now)) && hol ? (hasHolDay ? HOL.key : "sun") : dayKey(now);
+    const todayKey = WORKDAYS.includes(dayKey(now)) && room.holiday ? "sun" : dayKey(now);
     const nowMin = now.getHours() * 60 + now.getMinutes();
     const marker = `<div class="now" style="left:${(nowMin / DAY_MIN) * 100}%"></div>`;
     const cl = hass?.states?.[room.climate];
     const ist = cl?.attributes?.current_temperature;
     const open = this._open.has(room.entry_id);
-    const days = (room.holiday_day ?? room.workday_entity) ? [...DAYS, HOL] : DAYS;
     const week = open
-      ? `<div class="oweek">${days
+      ? `<div class="oweek">${DAYS
           .map(
             (d) => `<div class="orow ${d.key === todayKey ? "today" : ""}"><div class="dlabel">${d.short}</div>${this._bar(
               this._entries(room, plan, d.key),
