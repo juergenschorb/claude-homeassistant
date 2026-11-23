@@ -146,10 +146,9 @@ Raumthermostate, Heizperiode, Heizmodus und den Optionstext für „Aus“ ausw�
 
 Ist die Integration [Heizplan](https://github.com/juergenschorb/heizplan) installiert, speichert die Karte dort: ein Plan je Raum, auf dem Home-Assistant-Server.
 
-- Räume, die noch über den Scheduler laufen, zeigen den Knopf **„Raum in Heizplan übernehmen“**. Er legt den Raum mit Wochenplan und Einstellungen (Heizperiode, Heizmodus, Feiertage) in der Integration an und entfernt die Zeitpläne aus dem Scheduler. Dafür als Administrator anmelden.
-- Wurde der Raum schon von Hand in der Integration angelegt und im Scheduler liegen noch Zeitpläne dafür, zeigt die Karte **„Plan aus dem Scheduler übernehmen“**. Heizperiode, Heizmodus und Feiertage trägst du in diesem Fall selbst beim Raum ein.
-- So lässt sich Raum für Raum umstellen. Nicht übernommene Räume laufen unverändert über den Scheduler weiter.
-- Für übernommene Räume gelten Thermostat, Heizperiode, Heizmodus und Feiertage aus der Integration (*Einstellungen → Geräte & Dienste → Heizplan → Konfigurieren*), nicht mehr die Felder im Karten-Editor.
+- Räume legst du in der Integration an (*Einstellungen → Geräte & Dienste → Heizplan → Raum hinzufügen*). Ab Karte 0.13.0 gibt es keine Übernahme aus dem Scheduler mehr; Pläne, die dort noch liegen, trägst du in der Karte neu ein.
+- Gibt es für ein Thermostat noch keinen Raum, arbeitet die Karte wie bisher mit dem Scheduler, falls er installiert ist, und weist sonst auf die fehlende Raumanlage hin.
+- Für Räume der Integration gelten Thermostat, Heizperiode, Heizmodus und Feiertage aus der Integration (*Einstellungen → Geräte & Dienste → Heizplan → Konfigurieren*), nicht mehr die Felder im Karten-Editor.
 - Ab Integration 0.3.0 kann je Raum zusätzlich eine Anwesenheit (Modus der Etage) gewählt werden: „Abwesend“ schaltet auf den Urlaubs-/Abwesend-Plan, „Urlaub zuhause“ nutzt Mo–Fr den Plan vom Sonntag. Die Karte zeigt dann den zweiten Plan als „Abwesend“.
 - Für Räume der Integration (ab 0.3.1) gibt es keine eigene Zeile „Feiertag“ mehr: an Feiertagen und bei „Urlaub zuhause“ gilt Mo–Fr der Plan vom Sonntag. Die Karte zeigt das als Hinweis an.
 - Als Entität der Karte kann das Thermostat stehen bleiben oder der Raum gewählt werden (`sensor.heizplan_<raum>`). Mit dem Raum bleibt die Karte beim Tausch des Thermostats unverändert.
