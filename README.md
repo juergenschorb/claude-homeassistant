@@ -136,6 +136,8 @@ rooms:
   - sensor.heizplan_buero
 ```
 
+Tippst du in der Übersicht auf einen Raum, öffnet sich dessen Heizplan-Karte in einem Fenster (Bearbeiten, Manuell usw. wie in der Raumkarte). Schließen mit ✕, Tippen daneben oder Esc. Der Pfeil rechts klappt stattdessen die Woche in der Übersicht auf. Mit `tap_action: expand` klappt auch das Antippen des Raums nur die Woche auf (ab 0.15.0).
+
 ## Stand
 
 Version 0.14.0, benötigt Integration 0.4.0. Mit Testdaten im Browser geprüft, noch nicht in einer echten Home-Assistant-Instanz.
