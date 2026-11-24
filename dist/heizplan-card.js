@@ -6,7 +6,7 @@
  * und zeitlich begrenzte manuelle Temperatur (pausiert den Plan bis zum Ende).
  */
 
-const CARD_VERSION = "0.14.0";
+const CARD_VERSION = "0.15.0";
 
 // Kartensymbol (Flamme + Wochenbalken auf einer kleinen Karte), abschaltbar mit show_icon: false
 const bars = (y, segs) =>
@@ -1131,9 +1131,22 @@ class HeizplanOverviewCard extends HTMLElement {
         { name: "floors", selector: { floor: { multiple: true } } },
         { name: "floor_filter", selector: { boolean: {} } },
         { name: "show_icon", selector: { boolean: {} } },
+        {
+          name: "tap_action",
+          selector: {
+            select: {
+              mode: "dropdown",
+              options: [
+                { value: "popup", label: "Heizplan-Karte des Raums öffnen" },
+                { value: "expand", label: "Woche in der Karte aufklappen" },
+              ],
+            },
+          },
+        },
       ],
       computeLabel: (s) =>
         ({
+          tap_action: "Antippen eines Raums",
           title: "Titel",
           rooms: "Räume (leer = alle)",
           group_by_floor: "Nach Etage gruppieren",
@@ -1150,7 +1163,7 @@ class HeizplanOverviewCard extends HTMLElement {
   }
 
   setConfig(config) {
-    this._config = { title: "Heizpläne", group_by_floor: true, show_icon: true, floor_filter: false, ...(config || {}) };
+    this._config = { title: "Heizpläne", group_by_floor: true, show_icon: true, floor_filter: false, tap_action: "popup", ...(config || {}) };
     this._open = this._open || new Set();
     // floors = fest angezeigte Etagen (leer = alle); _sel = Auswahl über die Schaltflächen (leer = alle erlaubten)
     const pre = this._config.floors;
@@ -1167,6 +1180,7 @@ class HeizplanOverviewCard extends HTMLElement {
       this._load();
       return;
     }
+    if (this._dialogCard) this._dialogCard.hass = hass;
     const sensors = (this._rooms || []).map((r) => r.sensor).filter(Boolean);
     if (sensors.some((e) => old.states[e] !== hass.states[e])) this._load();
     else if ((this._rooms || []).some((r) => r.workday_entity && old.states[r.workday_entity] !== hass.states[r.workday_entity]))
@@ -1362,14 +1376,69 @@ class HeizplanOverviewCard extends HTMLElement {
         this._render();
       })
     );
-    this.shadowRoot.querySelectorAll(".oroom").forEach((el) =>
+    const toggle = (id) => {
+      if (this._open.has(id)) this._open.delete(id);
+      else this._open.add(id);
+      this._render();
+    };
+    this.shadowRoot.querySelectorAll(".oroom").forEach((el) => {
       el.addEventListener("click", () => {
         const id = el.dataset.id;
-        if (this._open.has(id)) this._open.delete(id);
-        else this._open.add(id);
-        this._render();
-      })
-    );
+        const room = (this._rooms || []).find((r) => r.entry_id === id);
+        if (this._config.tap_action === "expand" || !room?.sensor) toggle(id);
+        else this._openDialog(room);
+      });
+      // der Pfeil klappt immer die Woche auf
+      el.querySelector(".chev")?.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        toggle(el.dataset.id);
+      });
+    });
+  }
+
+  // Heizplan-Karte des Raums in einem eigenen Fenster über dem Dashboard
+  _openDialog(room) {
+    this._closeDialog();
+    const overlay = document.createElement("div");
+    overlay.style.cssText =
+      "position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.55);padding:12px;box-sizing:border-box";
+    const box = document.createElement("div");
+    box.style.cssText = "width:min(560px,100%);max-height:92vh;overflow:auto;border-radius:14px;position:relative";
+    const card = document.createElement("heizplan-card");
+    card.setConfig({ entity: room.sensor, show_icon: this._config.show_icon });
+    card.hass = this._hass;
+    const close = document.createElement("button");
+    close.textContent = "✕";
+    close.setAttribute("aria-label", "Schließen");
+    close.style.cssText =
+      "position:absolute;top:8px;right:8px;z-index:1;width:32px;height:32px;border-radius:50%;border:0;background:rgba(128,128,128,.35);color:inherit;font-size:16px;cursor:pointer";
+    close.addEventListener("click", () => this._closeDialog());
+    box.append(card, close);
+    overlay.append(box);
+    overlay.addEventListener("click", (ev) => {
+      if (ev.target === overlay) this._closeDialog();
+    });
+    this._onKey = (ev) => {
+      if (ev.key === "Escape") this._closeDialog();
+    };
+    document.addEventListener("keydown", this._onKey);
+    document.body.append(overlay);
+    this._dialog = overlay;
+    this._dialogCard = card;
+  }
+
+  _closeDialog() {
+    if (this._onKey) document.removeEventListener("keydown", this._onKey);
+    this._onKey = null;
+    this._dialog?.remove();
+    this._dialog = null;
+    this._dialogCard = null;
+    // Pläne können im Fenster geändert worden sein
+    if (this._hass) this._load();
+  }
+
+  disconnectedCallback() {
+    this._closeDialog();
   }
 }
 
